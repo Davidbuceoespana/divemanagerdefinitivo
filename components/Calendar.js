@@ -1,204 +1,142 @@
-// components/Calendar.js
-import { useState, useEffect } from 'react';
-import { Calendar as BigCalendar, dateFnsLocalizer } from 'react-big-calendar';
-import { format, parse, startOfWeek, getDay } from 'date-fns';
-import Link from 'next/link';
+// components/SimpleCalendar.js
+import React, { useState, useEffect } from 'react';
+import { Calendar, dateFnsLocalizer } from 'react-big-calendar';
+import withDragAndDrop from 'react-big-calendar/lib/addons/dragAndDrop';
+import format from 'date-fns/format';
+import parse from 'date-fns/parse';
+import startOfWeek from 'date-fns/startOfWeek';
+import getDay from 'date-fns/getDay';
+import es from 'date-fns/locale/es';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
+import 'react-big-calendar/lib/addons/dragAndDrop/styles.css';
 
+const locales = { es };
+const localizer = dateFnsLocalizer({ format, parse, startOfWeek, getDay, locales });
+const DnDCalendar = withDragAndDrop(Calendar);
 const COLORS = ['blue','red','green','cyan','yellow','gray','lightblue','orange'];
-const localizer = dateFnsLocalizer({
-  format, parse, startOfWeek, getDay,
-  locales: { es: require('date-fns/locale/es') },
-});
 
-export default function Calendar() {
-  // 1) Leer el centro activo
-  const center = typeof window !== 'undefined'
-    ? localStorage.getItem('active_center')
-    : null;
-  if (!center) return null;
+export default function SimpleCalendar() {
+  if (typeof window === 'undefined') return null;
+  const center = localStorage.getItem('active_center');
+  if (!center) return <p>Elige un centro</p>;
 
-  // 2) Claves por centro
-  const EVENTS_KEY  = `dive_manager_events_${center}`;
-  const STAFF_KEY   = `dive_manager_staff_${center}`;
-  const CLIENTS_KEY = `dive_manager_clients_${center}`;
+  const [events,         setEvents]       = useState([]);
+  const [clientsList,    setClientsList]  = useState([]);
+  const [selectedEvent,  setSelectedEvent]= useState(null);
+  const [showEditForm,   setShowEditForm] = useState(false);
 
-  // 3) States
-  const [events, setEvents]           = useState([]);
-  const [staff, setStaff]             = useState([]);    // sólo nombres
-  const [clientsList, setClientsList] = useState([]);    // sólo nombres
-  const [showForm, setShowForm]       = useState(false);
-  const [editMode, setEditMode]       = useState(false);
-  const [formData, setFormData] = useState({
-    id: null,
-    instructor: '',
-    clientsList: [],
-    clientInput: '',
-    activity: '',
-    datetime: '',
-    color: COLORS[0],
-  });
-
-  // 4) Carga inicial
+  // Carga inicial de eventos y clientes CRM
   useEffect(() => {
-    // Staff
-    const rawStaff = localStorage.getItem(STAFF_KEY) || '[]';
-    const arrStaff = JSON.parse(rawStaff);
-    setStaff(arrStaff.map(x => x.name));
-
-    // Clientes
-    const rawClients = localStorage.getItem(CLIENTS_KEY) || '[]';
-    const arrClients = JSON.parse(rawClients);
-    setClientsList(arrClients.map(x => x.name));
-
-    // Eventos
-    const rawEv = localStorage.getItem(EVENTS_KEY) || '[]';
-    const arrEv  = JSON.parse(rawEv);
-    setEvents(arrEv.map(ev => ({
+    const rawEv = localStorage.getItem(`dive_manager_events_${center}`) || '[]';
+    setEvents(JSON.parse(rawEv).map(ev => ({
       ...ev,
       start: new Date(ev.start),
       end:   new Date(ev.end),
+      instructor: ev.instructor || '',
+      clientsList: ev.clientsList || [],
+      color:      ev.color      || COLORS[0],
+      capacity:   ev.capacity   || 1,
     })));
+
+    const rawClients = JSON.parse(localStorage.getItem(`dive_manager_clients_${center}`) || '[]');
+    setClientsList(rawClients.map(x => x.name));
   }, [center]);
 
-  // 5) Persiste eventos
+  // Persiste cambios en eventos
   useEffect(() => {
-    localStorage.setItem(EVENTS_KEY, JSON.stringify(events));
+    localStorage.setItem(`dive_manager_events_${center}`, JSON.stringify(events));
   }, [events, center]);
 
-  // 6) Cuando abra el formulario, si instructor está vacío, pon el primero
-  useEffect(() => {
-    if (showForm && !formData.instructor && staff.length > 0) {
-      setFormData(fd => ({ ...fd, instructor: staff[0] }));
-    }
-  }, [showForm, staff]);
-
-  // 7) Handlers crear/editar/borrar
-  const handleSelectSlot = ({ start }) => {
-    setFormData({
-      id: null,
-      instructor: '',
-      clientsList: [],
-      clientInput: '',
-      activity: '',
-      datetime: start.toISOString().slice(0,16),
-      color: COLORS[0],
-    });
-    setEditMode(false);
-    setShowForm(true);
+  const formatForInput = date => {
+    const pad = n => n.toString().padStart(2,'0');
+    return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
   };
+
+  // Crear evento
+  const handleSelectSlot = ({ start, end }) => {
+    const title = window.prompt('Título del evento');
+    if (title) {
+      setEvents([...events, {
+        id: Date.now(),
+        title,
+        start, end,
+        instructor: '',
+        clientsList: [],
+        color: COLORS[0],
+        capacity: 1
+      }]);
+    }
+  };
+
+  // Mover o redimensionar
+  const moveEvent = ({ event, start, end }) => {
+    setEvents(events.map(ev =>
+      ev.id === event.id ? { ...ev, start, end } : ev
+    ));
+  };
+
+  // Abrir modal de edición
+  const handleSelectEvent = ev => {
+    setSelectedEvent({ ...ev, clientInput: '' });
+    setShowEditForm(true);
+  };
+
+  // Clientes en el modal
   const addClient = () => {
-    const name = formData.clientInput.trim();
-    if (name && !formData.clientsList.includes(name)) {
-      setFormData(fd => ({
-        ...fd,
-        clientsList: [...fd.clientsList, name],
+    const name = selectedEvent.clientInput?.trim();
+    if (name && !selectedEvent.clientsList.includes(name)) {
+      setSelectedEvent(se => ({
+        ...se,
+        clientsList: [...se.clientsList, name],
         clientInput: ''
       }));
     }
   };
   const removeClient = idx => {
-    setFormData(fd => ({
-      ...fd,
-      clientsList: fd.clientsList.filter((_,i) => i!==idx)
+    setSelectedEvent(se => ({
+      ...se,
+      clientsList: se.clientsList.filter((_,i)=>i!==idx)
     }));
   };
-  const handleCreate = e => {
+
+  // Guardar edición
+  const handleUpdateEvent = e => {
     e.preventDefault();
-    const date = new Date(formData.datetime);
-    const ev = {
-      id: Date.now(),
-      instructor: formData.instructor,
-      clients: formData.clientsList.join(', '),
-      activity: formData.activity,
-      title: `${formData.instructor} – ${formData.activity} (${formData.clientsList.join(', ')})`,
-      start: date, end: date,
-      color: formData.color,
-    };
-    setEvents(list => [...list, ev]);
-    setShowForm(false);
-  };
-  const handleSelectEvent = ev => {
-    setFormData({
-      id: ev.id,
-      instructor: ev.instructor,
-      clientsList: ev.clients.split(', ').filter(Boolean),
-      clientInput: '',
-      activity: ev.activity,
-      datetime: ev.start.toISOString().slice(0,16),
-      color: ev.color,
-    });
-    setEditMode(true);
-    setShowForm(true);
-  };
-  const handleUpdate = e => {
-    e.preventDefault();
-    const date = new Date(formData.datetime);
-    setEvents(list => list.map(ev =>
-      ev.id === formData.id
-        ? {
-            ...ev,
-            instructor: formData.instructor,
-            clients: formData.clientsList.join(', '),
-            activity: formData.activity,
-            title: `${formData.instructor} – ${formData.activity} (${formData.clientsList.join(', ')})`,
-            start: date, end: date,
-            color: formData.color,
-          }
-        : ev
+    // Reconstruir título incluyendo clientes
+    const baseTitle = selectedEvent.title.split('(')[0].trim();
+    const newTitle = `${baseTitle} (${selectedEvent.clientsList.join(', ')})`;
+    setEvents(events.map(ev =>
+      ev.id === selectedEvent.id ? { ...selectedEvent, title: newTitle } : ev
     ));
-    setShowForm(false);
+    setShowEditForm(false);
   };
-  const handleDelete = () => {
-    setEvents(list => list.filter(ev => ev.id !== formData.id));
-    setShowForm(false);
+  const handleDeleteEvent = () => {
+    setEvents(events.filter(ev => ev.id !== selectedEvent.id));
+    setShowEditForm(false);
   };
-  const handleCancel = () => setShowForm(false);
 
   return (
-    <div style={{padding:20,fontFamily:'sans-serif',position:'relative'}}>
+    <div style={{ position:'relative', padding:20, fontFamily:'sans-serif' }}>
       <h2>Agenda de Instructores — Centro: {center}</h2>
-      <Link href="/" style={{
-        display:'inline-block', marginBottom:20,
-        padding:'6px 12px', background:'#0070f3',
-        color:'white', borderRadius:4, textDecoration:'none'
-      }}>← Volver al panel principal</Link>
 
-      {showForm && (
+      {showEditForm && selectedEvent && (
         <div style={{
-          position:'absolute',top:60,left:60,width:360,
-          background:'#fff',padding:20,border:'1px solid #ccc',
-          borderRadius:4,zIndex:1000
+          position:'absolute', top:60, left:60, width:360,
+          background:'#fff', padding:20, border:'1px solid #ccc',
+          borderRadius:4, zIndex:1000
         }}>
-          <h3>{editMode ? 'Editar Evento' : 'Crear Evento'}</h3>
-          <form onSubmit={editMode ? handleUpdate : handleCreate}>
+          <h3>Editar Evento</h3>
+          <form onSubmit={handleUpdateEvent}>
 
-            {/* Autocomplete Staff */}
-            <label>Staff:</label><br/>
-            <input
-              list="staff-dl"
-              required
-              placeholder="Buscar staff..."
-              style={{ width:'100%', padding:6, marginBottom:12 }}
-              value={formData.instructor}
-              onChange={e => setFormData(fd => ({ ...fd, instructor: e.target.value }))}
-              onKeyDown={ev => ev.key==='Enter' && ev.preventDefault()}
-            />
-            <datalist id="staff-dl">
-              {staff.map(name => <option key={name} value={name}/>)}
-            </datalist>
-
-            {/* Autocomplete Clientes */}
-            <label>Clientes (CRM):</label><br/>
+            {/* Clientes */}
+            <label>Clientes:</label><br/>
             <div style={{ display:'flex', marginBottom:8 }}>
               <input
                 list="clients-dl"
-                type="text"
                 placeholder="Buscar cliente..."
                 style={{ flex:1, padding:6 }}
-                value={formData.clientInput}
-                onChange={e => setFormData(fd => ({ ...fd, clientInput: e.target.value }))}
-                onKeyDown={ev => ev.key==='Enter' && (ev.preventDefault(), addClient())}
+                value={selectedEvent.clientInput || ''}
+                onChange={e => setSelectedEvent(se => ({ ...se, clientInput: e.target.value }))}
               />
               <button type="button" onClick={addClient}
                       style={{ marginLeft:8, padding:'6px 12px' }}>
@@ -209,7 +147,7 @@ export default function Calendar() {
               {clientsList.map(c => <option key={c} value={c}/>)}
             </datalist>
             <div style={{ marginBottom:12 }}>
-              {formData.clientsList.map((c,i) => (
+              {selectedEvent.clientsList.map((c,i) => (
                 <span key={i} style={{
                   display:'inline-block', padding:'2px 6px', margin:2,
                   background:'#eef', borderRadius:4
@@ -219,77 +157,105 @@ export default function Calendar() {
                           style={{
                             marginLeft:4, background:'transparent',
                             border:'none', cursor:'pointer', fontWeight:'bold'
-                          }}>×</button>
+                          }}>
+                    ×
+                  </button>
                 </span>
               ))}
             </div>
 
-            {/* Resto del formulario */}
-            <label>Actividad:</label><br/>
+            {/* Instructor libre */}
+            <label>Instructor:</label><br/>
             <input
-              type="text" required
+              type="text"
+              placeholder="Nombre del instructor"
+              value={selectedEvent.instructor}
+              onChange={e => setSelectedEvent(se => ({ ...se, instructor: e.target.value }))}
               style={{ width:'100%', padding:6, marginBottom:12 }}
-              value={formData.activity}
-              onChange={e=>setFormData(fd=>({...fd,activity:e.target.value}))}
+            />
+
+            {/* Título */}
+            <label>Actividad (título):</label><br/>
+            <input
+              type="text"
+              value={selectedEvent.title}
+              onChange={e => setSelectedEvent(se => ({ ...se, title: e.target.value }))}
+              style={{ width:'100%', padding:6, marginBottom:12 }}
             /><br/>
 
-            <label>Fecha y Hora:</label><br/>
+            {/* Fecha inicio */}
+            <label>Inicio:</label><br/>
             <input
-              type="datetime-local" required
+              type="datetime-local"
+              value={formatForInput(selectedEvent.start)}
+              onChange={e => setSelectedEvent(se => ({ ...se, start: new Date(e.target.value) }))}
               style={{ width:'100%', padding:6, marginBottom:12 }}
-              value={formData.datetime}
-              onChange={e=>setFormData(fd=>({...fd,datetime:e.target.value}))}
             /><br/>
 
+            {/* Fecha fin */}
+            <label>Fin:</label><br/>
+            <input
+              type="datetime-local"
+              value={formatForInput(selectedEvent.end)}
+              onChange={e => setSelectedEvent(se => ({ ...se, end: new Date(e.target.value) }))}
+              style={{ width:'100%', padding:6, marginBottom:12 }}
+            /><br/>
+
+            {/* Color */}
             <label>Color:</label><br/>
             <div style={{ display:'flex', flexWrap:'wrap', marginBottom:12 }}>
-              {COLORS.map(c=>(
+              {COLORS.map(c => (
                 <div key={c}
-                     onClick={()=>setFormData(fd=>({...fd,color:c}))}
-                     style={{
-                       width:24, height:24, backgroundColor:c, margin:4,
-                       border: formData.color===c?'2px solid #000':'1px solid #ccc',
-                       cursor:'pointer'
-                     }}/>
+                  onClick={()=>setSelectedEvent(se=>({...se, color:c}))}
+                  style={{
+                    width:24, height:24, backgroundColor:c, margin:4,
+                    border: selectedEvent.color===c ? '2px solid #000' : '1px solid #ccc',
+                    cursor:'pointer'
+                  }}/>
               ))}
             </div>
 
-            <button type="submit" style={{ padding:'6px 12px', marginRight:8 }}>
-              {editMode ? 'Guardar' : 'Crear'}
-            </button>
-            <button type="button" onClick={handleCancel}
-                    style={{ padding:'6px 12px' }}>
-              Cancelar
-            </button>
-            {editMode && (
-              <button type="button" onClick={handleDelete}
-                      style={{ padding:'6px 12px', marginLeft:8, color:'red' }}>
-                Borrar
-              </button>
-            )}
+            {/* Capacidad */}
+            <label>Máx. clientes:</label><br/>
+            <input
+              type="number"
+              min="1"
+              value={selectedEvent.capacity}
+              onChange={e=>setSelectedEvent(se => ({ ...se, capacity: Number(e.target.value) }))}
+              style={{ width:100, padding:6, marginBottom:12 }}
+            /><br/>
+
+            <button type="submit" style={{ marginRight:8, padding:'6px 12px' }}>Guardar</button>
+            <button type="button" onClick={()=>setShowEditForm(false)} style={{ marginRight:8, padding:'6px 12px' }}>Cancelar</button>
+            <button type="button" onClick={handleDeleteEvent} style={{ padding:'6px 12px', color:'red' }}>Borrar</button>
           </form>
         </div>
       )}
 
-      <div style={{ height:'80vh', filter: showForm?'blur(2px)':'' }}>
-        <BigCalendar
+      <div style={{ height:'80vh', filter: showEditForm ? 'blur(2px)' : '' }}>
+        <DnDCalendar
           localizer={localizer}
           events={events}
           startAccessor="start"
           endAccessor="end"
           defaultView="week"
+          views={['month','week','day']}
+          style={{ height:'100%' }}
           selectable
+          resizable
           onSelectSlot={handleSelectSlot}
           onSelectEvent={handleSelectEvent}
-          eventPropGetter={evt=>({ style:{
-            backgroundColor:evt.color,
-            borderRadius:'4px',
-            border:'1px solid #444'
-          }})}
-          style={{ height:'100%' }}
+          onEventDrop={moveEvent}
+          onEventResize={moveEvent}
+          eventPropGetter={evt => ({
+            style: {
+              backgroundColor: evt.color,
+              borderRadius:'4px',
+              border:'1px solid #444'
+            }
+          })}
         />
       </div>
     </div>
   );
 }
-

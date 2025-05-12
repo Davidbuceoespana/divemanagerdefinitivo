@@ -151,7 +151,11 @@ export default function CrmPage() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.text();
       })
-      .then(txt => setClients(parseCSV(txt)))
+      .then(txt => {
+  const parsed = parseCSV(txt);
+  setClients(parsed.reverse());
+})
+
       .catch(err => setError(`No se pudo cargar Google Sheet: ${err.message}`));
   };
 
@@ -166,14 +170,17 @@ export default function CrmPage() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(clients));
   }, [clients, center]);
 
-  // Importar CSV
-  useEffect(() => {
-    if (mode === 'import' && file) {
-      const reader = new FileReader();
-      reader.onload = e => setClients(parseCSV(e.target.result));
-      reader.readAsText(file);
-    }
-  }, [mode, file]);
+  // Importar CSV (con orden invertido)
+useEffect(() => {
+  if (mode === 'import' && file) {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const parsed = parseCSV(e.target.result);
+      setClients(parsed.reverse());
+    };
+    reader.readAsText(file);
+  }
+}, [mode, file]);
 
   // Google mode: carga inicial + polling
   useEffect(() => {
@@ -184,21 +191,32 @@ export default function CrmPage() {
     }
   }, [mode, sheetUrl]);
 
-  // Orden y filtrado
-  const sorted = useMemo(
-    () => [...clients].sort((a,b)=> new Date(b.registered) - new Date(a.registered)),
-    [clients]
+  // Google mode: carga inicial + polling
+ useEffect(() => {
+  if (mode === 'google') {
+    fetchSheet();
+    const id = setInterval(fetchSheet, 30000);
+    return () => clearInterval(id);
+  }
+}, [mode, sheetUrl]);
+
+ // ── Filtrado + Ordenado según el modo ──
+const filtered = useMemo(() => {
+  const base = mode === 'google'
+    ? [...clients].reverse()
+    : [...clients].sort((a, b) =>
+        new Date(b.registered) - new Date(a.registered)
+      );
+  if (!searchTerm) return base;
+  const t = searchTerm.toLowerCase();
+  return base.filter(c =>
+    c.name.toLowerCase().includes(t) ||
+    c.email.toLowerCase().includes(t) ||
+    c.phone.toLowerCase().includes(t) ||
+    c.city.toLowerCase().includes(t)
   );
-  const filtered = useMemo(() => {
-    if (!searchTerm) return sorted;
-    const t = searchTerm.toLowerCase();
-    return sorted.filter(c =>
-      c.name.toLowerCase().includes(t) ||
-      c.email.toLowerCase().includes(t) ||
-      c.phone.toLowerCase().includes(t) ||
-      c.city.toLowerCase().includes(t)
-    );
-  }, [searchTerm, sorted]);
+}, [clients, mode, searchTerm]);
+
 
   // Auto-abre detalle si hay un solo resultado
   useEffect(() => {
@@ -312,7 +330,7 @@ const totalYear     = purchasesYear.reduce((sum, p) => sum + p.amount, 0);
               </tr>  
             </thead>
             <tbody>
-              {filtered.map(c=>(
+              {filtered.map(c => (
                 <tr key={c.id} style={styles.tr}>
                   <td style={styles.td}>{c.name}</td>
                   <td style={styles.td}>{c.city}</td>

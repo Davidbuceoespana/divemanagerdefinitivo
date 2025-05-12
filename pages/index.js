@@ -111,7 +111,10 @@ export default function Dashboard() {
         <Link href="/crm"    style={navLink}>CRM</Link> |{' '}
         <Link href="/caja"   style={navLink}>Caja</Link> |{' '}
         <Link href="/reservas" style={navLink}>Reservas</Link> |{' '}
-        <Link href="/staff"  style={navLink}>Staff</Link>
+        <Link href="/bonos" style={navLink}>Bonos</Link> |{' '}
+        <Link href="/manager"   style={navLink}>Manager</Link> |{' '}
+        <Link href="/gastos" style={navLink}>Gastos</Link> |{' '}
+       <Link href="/seguimiento" style={navLink}>Seguimiento</Link> |{' '}
       </nav>
 
       <div style={{ display:'flex', gap:16, marginBottom:32 }}>
