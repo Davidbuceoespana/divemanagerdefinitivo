@@ -1,172 +1,218 @@
 // pages/index.js 
-import { useState, useEffect } from 'react';
-import { useRouter }      from 'next/router';
-import Link               from 'next/link';
-import { parseISO, isSameDay, addDays } from 'date-fns';
+import { useSession, signOut } from "next-auth/react";
+import { useRouter }           from "next/router";
+import Link                    from "next/link";
+import { useState, useEffect } from "react";
+import { isSameDay, addDays }  from "date-fns";
 
 export default function Dashboard() {
+  const { data: session, status } = useSession();
   const router = useRouter();
+  const [events, setEvents]           = useState([]);
+  const [clients, setClients]         = useState([]);
+  const [seguimientos, setSeguimientos] = useState([]);
+  const [vouchers, setVouchers]       = useState([]);
+  const [upsellData, setUpsellData]   = useState([]); // Oportunidades de venta
 
-  // 1) Centro activo: undefined = comprobando, null = redirigiendo, string = id
-  const [center, setCenter] = useState(undefined);
+  // 1) Auth
+  if (status === "loading") return <p>Cargando sesión…</p>;
+  if (!session) {
+    router.replace("/login");
+    return null;
+  }
 
-  // 2) Datos dinámicos
-  const [reservations, setReservations] = useState([]);
-  const [clients,      setClients]      = useState([]);
-  const [events,       setEvents]       = useState([]);
-
-  // ---- Leer centro activo y redirigir si no hay ----
+  // 2) Carga datos desde localStorage
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const c = localStorage.getItem('active_center');
-    if (!c) {
-      router.replace('/login');
-      setCenter(null);
-    } else {
-      setCenter(c);
-    }
-  }, [router]);
-
-  // ---- Función que carga TODO desde localStorage según centro ----
-  const loadAll = () => {
-    const RES_KEY = `dive_manager_reservations_${center}`;
-    const CLI_KEY = `dive_manager_clients_${center}`;
-    const EVT_KEY = `dive_manager_events_${center}`;
-
-    const rs = JSON.parse(localStorage.getItem(RES_KEY)  || '[]');
-    const cs = JSON.parse(localStorage.getItem(CLI_KEY)  || '[]');
-    const ev = JSON.parse(localStorage.getItem(EVT_KEY) || '[]');
-
-    setReservations(rs);
-    setClients(cs);
-    setEvents(ev.map(e => ({ ...e, start: new Date(e.start) })));
-  };
-
-  // ---- Carga inicial tras saber el centro ----
-  useEffect(() => {
+    const center = localStorage.getItem("active_center");
     if (!center) return;
-    loadAll();
-  }, [center]);
+    // agenda
+    const ev = JSON.parse(
+      localStorage.getItem(`dive_manager_events_${center}`) || "[]"
+    ).map(e => ({ ...e, start: new Date(e.start) }));
+    setEvents(ev);
+    // crm
+    const loadedClients = JSON.parse(
+      localStorage.getItem(`dive_manager_clients_${center}`) || "[]"
+    );
+    setClients(loadedClients);
+    // seguimientos
+    setSeguimientos(JSON.parse(
+      localStorage.getItem(`dive_manager_seguimientos_${center}`) || "[]"
+    ));
+    // bonos
+    setVouchers(JSON.parse(
+      localStorage.getItem(`dive_manager_vouchers_${center}`) || "[]"
+    ));
 
-  // ---- Recargar cuando volvemos al "/" (por Link o back) ----
-  useEffect(() => {
-    const onRouteChange = url => {
-      if (url === '/') loadAll();
-    };
-    router.events.on('routeChangeComplete', onRouteChange);
-    return () => router.events.off('routeChangeComplete', onRouteChange);
-  }, [router.events, center]);
+    // --- Oportunidades de venta ---
+    // Disparadores por defecto (puedes ampliar en el CRM)
+    const DEFAULT_TRIGGERS = [
+      {
+        baseCourse: "Open Water",
+        minDays: 90,
+        recommend: "Advanced",
+        message: "¡Ofrécele el Advanced ya!"
+      },
+      {
+        baseCourse: "Advanced",
+        minDays: 120,
+        recommend: "Rescue",
+        message: "¡Es momento de hablarle del Rescue Diver!"
+      }
+    ];
+    const triggers = JSON.parse(localStorage.getItem(`dive_manager_upsell_triggers_${center}`)) || DEFAULT_TRIGGERS;
+    const hoy = new Date();
 
-  // ---- Estados intermedios ----
-  if (center === undefined) {
-    return <p style={{ padding:20, fontFamily:'sans-serif' }}>Cargando…</p>;
-  }
-  if (center === null) {
-    return null; // ya redirigió a /login
-  }
+    // Prepara lista de cursos realizados por cliente
+    let cursosRealizados = [];
+    loadedClients.forEach(cliente => {
+      if (Array.isArray(cliente.cursos)) {
+        cliente.cursos.forEach(cur =>
+          cursosRealizados.push({ name: cliente.name, curso: cur.curso, fecha: cur.fecha })
+        );
+      }
+    });
 
-  // ---- Cambiar de centro ----
-  const handleChange = () => {
-    localStorage.removeItem('active_center');
-    router.push('/login');
-  };
+    // Busca oportunidades
+    let oportunidades = [];
+    cursosRealizados.forEach(item => {
+      triggers.forEach(trig => {
+        // Si ha hecho el curso base hace más de X días => oportunidad
+        const fechaCurso = new Date(item.fecha);
+        const diasPasados = Math.floor((hoy - fechaCurso) / (1000 * 60 * 60 * 24));
+        if (
+          item.curso &&
+          trig.baseCourse &&
+          item.curso.toLowerCase() === trig.baseCourse.toLowerCase() &&
+          diasPasados >= trig.minDays
+        ) {
+          oportunidades.push({
+            name: item.name,
+            curso: item.curso,
+            fecha: item.fecha,
+            recommend: trig.recommend,
+            dias: diasPasados,
+            message: trig.message
+          });
+        }
+      });
+    });
 
-  // ---- Métricas ----
-  const calcRemaining = r => {
-    const tot  = Number(r.totalAmount)   || 0;
-    const dep  = Number(r.depositAmount) || 0;
-    const paid = (r.payments||[]).reduce((s,p)=>s + (Number(p.amount)||0), 0);
-    return tot - dep - paid;
-  };
-  const totalRes = reservations.length;
-  const openRes  = reservations.filter(r => calcRemaining(r) > 0).length;
+    setUpsellData(oportunidades);
+  }, []);
+
+  // 3) Métricas
+  const today    = new Date();
+  const evToday  = events.filter(e => isSameDay(e.start, today));
+  const evTmrw   = events.filter(e => isSameDay(e.start, addDays(today, 1)));
   const totalCli = clients.length;
+  const totalSeg = seguimientos.length;
+  const openBonos = vouchers
+    .reduce((sum, v) => sum + ((v.total || 0) - (v.used || 0)), 0);
 
-  const today   = new Date();
-  const evToday = events.filter(ev => isSameDay(ev.start, today));
-  const evTmrw  = events.filter(ev => isSameDay(ev.start, addDays(today,1)));
-
-  // ---- Render ----
   return (
-    <div style={{ padding:20, fontFamily:'sans-serif' }}>
-      <h1>Gestión Centro Buceo España — {center}</h1>
-
-      <button
-        onClick={handleChange}
-        style={{
-          marginBottom:'1rem',
-          padding:'6px 12px',
-          background:'#dc3545',
-          color:'white',
-          border:'none',
-          borderRadius:4,
-          cursor:'pointer'
-        }}
-      >
-        Cambiar Centro
+    <div style={{ padding:20, fontFamily:"sans-serif" }}>
+      <h1>Bienvenido, {session.user.email}</h1>
+      <button onClick={() => signOut({ callbackUrl:"/login" })}>
+        Cerrar Sesión
       </button>
-
-      <nav style={{ marginBottom:20 }}>
-        <Link href="/agenda" style={navLink}>Agenda</Link> |{' '}
-        <Link href="/crm"    style={navLink}>CRM</Link> |{' '}
-        <Link href="/caja"   style={navLink}>Caja</Link> |{' '}
-        <Link href="/reservas" style={navLink}>Reservas</Link> |{' '}
-        <Link href="/bonos" style={navLink}>Bonos</Link> |{' '}
-        <Link href="/manager"   style={navLink}>Manager</Link> |{' '}
-        <Link href="/gastos" style={navLink}>Gastos</Link> |{' '}
-       <Link href="/seguimiento" style={navLink}>Seguimiento</Link> |{' '}
+      <nav style={{ marginTop:20 }}>
+        <Link href="/crm">Crm</Link> |{" "}
+        <Link href="/agenda">Agenda</Link> |{" "}
+        <Link href="/bonos">Bonos</Link> |{" "}
+        <Link href="/caja">Caja</Link> |{" "}
+        <Link href="/seguimiento">Seguimiento</Link> |{" "}
+        <Link href="/gastos">Gastos</Link> |{" "}
+        <Link href="/reservas">Reservas</Link> |{" "}
+        <Link href="/oportunidades-venta">Oportunidades Venta</Link> |{" "}
+        <Link href="/manager">Manager</Link> |{" "}
       </nav>
 
-      <div style={{ display:'flex', gap:16, marginBottom:32 }}>
-        <Metric label="Reservas abiertas" value={openRes} />
-        <Metric label="Total reservas"    value={totalRes} />
-        <Metric label="Clientes CRM"      value={totalCli} />
-        <Metric label="Eventos hoy"       value={evToday.length} />
-        <Metric label="Eventos mañana"    value={evTmrw.length} />
+      {/* --- Métricas rápidas + Oportunidades --- */}
+      <div style={{
+        display: "flex", gap:16, flexWrap:"wrap", margin: "20px 0"
+      }}>
+        <Metric label="Eventos hoy"     value={evToday.length} />
+        <Metric label="Eventos mañana"  value={evTmrw.length} />
+        <Metric label="Total clientes"  value={totalCli} />
+        <Metric label="Total seguimientos" value={totalSeg} />
+        <Metric label="Bonos abiertos"  value={openBonos} />
+
+        {/* --- Caja negra de oportunidades --- */}
+        <div style={{
+          flex:"1 1 300px",
+          background:"#000",
+          color:"#fff",
+          padding:16,
+          borderRadius:8,
+          textAlign:"center",
+          minWidth:200,
+          maxWidth:320,
+          display:"flex",
+          flexDirection:"column",
+          justifyContent:"center",
+          alignItems:"center"
+        }}>
+          <small style={{ opacity:0.8 }}>Oportunidades de venta</small>
+          <div style={{ fontSize:24, marginTop:4, marginBottom:8, color: "#ffe300", fontWeight:"bold" }}>
+            {upsellData.length}
+          </div>
+          {upsellData.length === 0 ? (
+            <div style={{ color:"#aaa", fontSize:13 }}>Sin oportunidades ahora</div>
+          ) : (
+            <ul style={{ listStyle:"none", margin:0, padding:0, fontSize:14, textAlign:"left" }}>
+              {upsellData.slice(0,6).map((o, i) => (
+                <li key={i} style={{ marginBottom:4 }}>
+                  <b>{o.name}</b> &rarr; <span style={{color:"#ffe300"}}>{o.recommend}</span>
+                </li>
+              ))}
+              {upsellData.length > 6 &&
+                <li style={{color:"#ffe300"}}>+{upsellData.length - 6} más…</li>
+              }
+            </ul>
+          )}
+        </div>
       </div>
 
+      {/* --- Listados de eventos --- */}
       <Section title="Eventos de Hoy"    items={evToday} />
       <Section title="Eventos de Mañana" items={evTmrw} />
     </div>
   );
 }
 
-// —— Componentes auxiliares ——
 function Metric({ label, value }) {
   return (
     <div style={{
-      flex:1,
-      background:'#222',
-      color:'white',
+      flex:"1 1 150px",
+      background:"#222",
+      color:"#fff",
       padding:16,
       borderRadius:8,
-      textAlign:'center'
+      textAlign:"center",
+      minWidth:120
     }}>
       <small style={{ opacity:0.8 }}>{label}</small>
       <div style={{ fontSize:24, marginTop:4 }}>{value}</div>
     </div>
   );
 }
+
 function Section({ title, items }) {
   return (
     <div style={{ marginBottom:24 }}>
       <h2>{title}</h2>
-      {items.length === 0 ? (
-        <p>No hay eventos.</p>
-      ) : (
-        <ul style={{ paddingLeft:16 }}>
-          {items.map(ev => (
-            <li key={ev.id}>
-              <strong>{ev.title}</strong> — {ev.start.toLocaleString()}
-            </li>
-          ))}
-        </ul>
-      )}
+      {items.length === 0
+        ? <p>No hay eventos.</p>
+        : <ul style={{ paddingLeft:16 }}>
+            {items.map(ev => (
+              <li key={ev.id || ev.start.toISOString()}>
+                <strong>{ev.title || "–sin título–"}</strong>{" "}
+                ({new Date(ev.start).toLocaleString()})
+              </li>
+            ))}
+          </ul>
+      }
     </div>
   );
 }
-const navLink = {
-  color:'#0070f3',
-  textDecoration:'none',
-  fontWeight:500
-};

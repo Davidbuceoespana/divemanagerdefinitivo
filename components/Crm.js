@@ -1,4 +1,3 @@
-// components/Crm.js
 import React, { useState, useEffect, useMemo } from 'react';
 
 // parseCSV robusto (case‐insensitive)
@@ -30,7 +29,8 @@ function parseCSV(csvText) {
       specialNeeds:  obj.specialneeds || obj['necesidad especial'] || '',
       contactPref:   obj.contactpref || obj['preferencia de comunicación'] || '',
       notes:         obj.notes || obj['algo más'] || '',
-      registered:    obj.registered || obj['registrado'] || new Date().toISOString()
+      registered:    obj.registered || obj['registrado'] || new Date().toISOString(),
+      cursos:        obj.cursos ? JSON.parse(obj.cursos) : []
     };
   });
 }
@@ -57,7 +57,7 @@ export default function Crm() {
     experience:'', howHeard:'', dob:'', nickname:'',
     diveCount:'', lastDive:'', interests:[],
     keywords:[], concerns:'', specialNeeds:'',
-    contactPref:'', notes:''
+    contactPref:'', notes:'', cursos:[]
   });
   const [editing, setEditing]       = useState(null);
   const [detail, setDetail]         = useState(null);
@@ -187,7 +187,7 @@ export default function Crm() {
                     experience:'', howHeard:'', dob:'', nickname:'',
                     diveCount:'', lastDive:'', interests:[],
                     keywords:[], concerns:'', specialNeeds:'',
-                    contactPref:'', notes:''
+                    contactPref:'', notes:'', cursos:[]
                   });
                 }}
               />
@@ -257,6 +257,51 @@ export default function Crm() {
               <p><strong>Necesidades:</strong> {detail.specialNeeds}</p>
               <p><strong>Contacto pre:</strong> {detail.contactPref}</p>
               <p><strong>Notas:</strong> {detail.notes}</p>
+              {detail.cursos && detail.cursos.length > 0 && (
+  <div style={{marginTop:16}}>
+    <h4>Cursos completados</h4>
+    <ul>
+      {detail.cursos.map((c, i) => (
+        <li key={i}>
+          {c.curso} <span style={{color:'#888'}}>({c.fecha})</span>
+        </li>
+      ))}
+    </ul>
+  </div>
+)}
+
+              
+              {/* CURSOS COMPLETADOS */}
+              <div style={{margin:'16px 0 8px 0', background:'#f8fcff', padding:12, borderRadius:6}}>
+                <strong style={{color:'#028'}}>Cursos completados:</strong>
+                {Array.isArray(detail.cursos) && detail.cursos.length > 0 ? (
+                  <ul style={{marginLeft:18}}>
+                    {detail.cursos.map((c,i)=>(
+                      <li key={i} style={{marginBottom:3}}>
+                        {c.curso} — <span style={{color:'#666'}}>{c.fecha}</span>
+                        <button
+                          style={{marginLeft:12, color:'#d24', background:'none', border:'none', cursor:'pointer', fontWeight:600}}
+                          title="Eliminar curso"
+                          onClick={()=>{
+                            if(window.confirm(`¿Eliminar el curso "${c.curso}" de ${detail.name}?`)){
+                              // Eliminamos el curso de este cliente
+                              setClients(clients => clients.map(cl =>
+                                cl.id === detail.id
+                                ? {...cl, cursos: cl.cursos.filter((_,j)=>j!==i)}
+                                : cl
+                              ));
+                              setDetail({...detail, cursos: detail.cursos.filter((_,j)=>j!==i)});
+                            }
+                          }}
+                        >🗑️</button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div style={{color:'#aaa'}}>Ningún curso registrado</div>
+                )}
+              </div>
+              
               <button style={styles.smallBtn} onClick={()=>setDetail(null)}>Cerrar</button>
             </div>
           </div>
@@ -356,6 +401,19 @@ function ClientForm({ data, onChange, onCancel, onSave }) {
               onChange={e=>onChange({...data,notes:e.target.value})}
               style={{...styles.textInput, height:80}}/>
           </div>
+          {data.cursos && data.cursos.length > 0 && (
+  <div style={{marginBottom:16}}>
+    <h4>Cursos completados</h4>
+    <ul>
+      {data.cursos.map((c, i) => (
+        <li key={i}>
+          {c.curso} <span style={{color:'#888'}}>({c.fecha})</span>
+        </li>
+      ))}
+    </ul>
+  </div>
+)}
+
           <div style={{textAlign:'right'}}>
             <button style={styles.smallBtn} type="submit">Guardar</button>{' '}
             <button style={styles.smallDangerBtn} onClick={onCancel}>Cancelar</button>
@@ -376,6 +434,7 @@ const styles = {
   topBar: { display:'flex', justifyContent:'space-between', marginBottom:16 },
   link: { background:'none', border:'none', color:'#0070f3', cursor:'pointer' },
   dangerBtn:{ background:'#d24', color:'#fff', border:'none', padding:'6px 12px', borderRadius:4, cursor:'pointer' },
+  primaryBtn:{ background:'#0070f3', color:'#fff', border:'none', padding:'10px 20px', borderRadius:4, cursor:'pointer', fontSize:16, marginBottom:18 },
   modeBar: { marginBottom:16, display:'flex', gap:12 },
   radioLabel:{ fontSize:14 },
   fileInput:{ marginBottom:16 },
