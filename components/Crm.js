@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { supabase } from '../lib/supabaseclientes'; // Cambia la ruta si está en otro sitio
+import { supabase } from '../lib/supabaseClient'; // Cambia la ruta si está en otro sitio
 
 // ========== Helper para CSV ===================
 function parseCSV(csvText) {
