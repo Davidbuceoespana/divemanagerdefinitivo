@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { supabase } from '../lib/supabaseclientes'; // Cambia la ruta si está en otro sitio
 
-// parseCSV robusto (case‐insensitive)
+// ========== Helper para CSV ===================
 function parseCSV(csvText) {
   const lines = csvText.trim().split('\n');
   if (lines.length < 2) return [];
@@ -11,7 +12,6 @@ function parseCSV(csvText) {
     const obj = {};
     keys.forEach((k,i) => obj[k] = cols[i] || '');
     return {
-      id:            Date.now() + Math.random(),
       name:          obj.name || obj.nombre || '',
       location:      obj.location || obj.población || '',
       email:         obj.email || obj['correo electrónico'] || '',
@@ -35,16 +35,11 @@ function parseCSV(csvText) {
   });
 }
 
+// ========== CRM PRINCIPAL ===============
 export default function Crm() {
-  const STORAGE_KEY = 'dive_manager_clients';
-  const STORAGE_KEY_SHEET = 'dive_manager_sheet_url';
   const center = typeof window !== 'undefined' && localStorage.getItem('active_center');
   if (!center) return null;
 
-  const DYN_KEY      = `${STORAGE_KEY}_${center}`;
-  const SHEET_KEY    = `${STORAGE_KEY_SHEET}_${center}`;
-
-  // — estados —
   const [clients, setClients]       = useState([]);
   const [mode, setMode]             = useState('manual'); // manual|import|google
   const [file, setFile]             = useState(null);
@@ -62,33 +57,42 @@ export default function Crm() {
   const [editing, setEditing]       = useState(null);
   const [detail, setDetail]         = useState(null);
 
-  // — carga inicial —
+  // 1. Cargar clientes al montar
   useEffect(() => {
-    const stored = localStorage.getItem(DYN_KEY);
-    if (stored) setClients(JSON.parse(stored));
-    const url = localStorage.getItem(SHEET_KEY);
-    if (url) setSheetUrl(url);
+    if (!center) return;
+    setError('');
+    (async () => {
+      const { data, error } = await supabase
+        .from('clientes')
+        .select('*')
+        .eq('center', center)
+        .order('registered', { ascending: false });
+      if (error) setError('Error cargando clientes');
+      else setClients(data || []);
+    })();
   }, [center]);
 
-  // — persiste —
+  // 2. Importar CSV y subir a Supabase
   useEffect(() => {
-    if (mode !== 'google') localStorage.setItem(DYN_KEY, JSON.stringify(clients));
-  }, [clients, mode, center]);
-
-  useEffect(() => {
-    if (sheetUrl) localStorage.setItem(SHEET_KEY, sheetUrl);
-  }, [sheetUrl, center]);
-
-  // — CSV —
-  useEffect(() => {
-    if (mode==='import' && file) {
+    if (mode === 'import' && file) {
       const r = new FileReader();
-      r.onload = e => setClients(parseCSV(e.target.result));
+      r.onload = async e => {
+        const parsed = parseCSV(e.target.result);
+        const dataToInsert = parsed.map(c => ({ ...c, center }));
+        // Limpiamos clientes previos:
+        await supabase.from('clientes').delete().eq('center', center);
+        // Insertamos todos:
+        const { error } = await supabase.from('clientes').insert(dataToInsert);
+        if (error) setError('Error importando CSV');
+        // Recargamos lista:
+        const { data } = await supabase.from('clientes').select('*').eq('center', center).order('registered', { ascending: false });
+        setClients(data || []);
+      };
       r.readAsText(file);
     }
-  }, [mode, file]);
+  }, [mode, file, center]);
 
-  // — Google Sheet —
+  // 3. Google Sheet temporal (sólo en memoria)
   useEffect(() => {
     if (mode==='google' && sheetUrl) {
       setError('');
@@ -105,7 +109,7 @@ export default function Crm() {
     }
   }, [mode, sheetUrl]);
 
-  // — orden y filtrado —
+  // 4. Filtro y orden
   const sorted = useMemo(() =>
     [...clients].sort((a,b)=> new Date(b.registered)-new Date(a.registered)),
   [clients]);
@@ -114,13 +118,71 @@ export default function Crm() {
     if (!searchTerm) return sorted;
     const t = searchTerm.toLowerCase();
     return sorted.filter(c =>
-      c.name.toLowerCase().includes(t) ||
-      c.email.toLowerCase().includes(t) ||
-      c.phone.toLowerCase().includes(t) ||
-      c.location.toLowerCase().includes(t)
+      c.name?.toLowerCase().includes(t) ||
+      c.email?.toLowerCase().includes(t) ||
+      c.phone?.toLowerCase().includes(t) ||
+      c.location?.toLowerCase().includes(t)
     );
   }, [searchTerm, sorted]);
 
+  // 5. Guardar (crear/editar)
+  const handleSave = async (data) => {
+    setError('');
+    if (editing) {
+      // EDITAR:
+      const { error } = await supabase
+        .from('clientes')
+        .update({ ...data })
+        .eq('id', editing.id);
+      if (error) setError('Error guardando cambios');
+    } else {
+      // NUEVO:
+      const { error } = await supabase
+        .from('clientes')
+        .insert([{ ...data, center }]);
+      if (error) setError('Error guardando cliente');
+    }
+    // Recargar:
+    const { data: newList } = await supabase
+      .from('clientes')
+      .select('*')
+      .eq('center', center)
+      .order('registered', { ascending: false });
+    setClients(newList || []);
+    setShowForm(false);
+    setEditing(null);
+    setForm({
+      name:'', location:'', email:'', phone:'', dni:'',
+      experience:'', howHeard:'', dob:'', nickname:'',
+      diveCount:'', lastDive:'', interests:[],
+      keywords:[], concerns:'', specialNeeds:'',
+      contactPref:'', notes:'', cursos:[]
+    });
+  };
+
+  // 6. Borrar cliente
+  const handleDelete = async (id) => {
+    if (!window.confirm("¿Seguro que quieres borrar este cliente?")) return;
+    const { error } = await supabase.from('clientes').delete().eq('id', id);
+    if (error) setError('Error borrando cliente');
+    // Recargar:
+    const { data: newList } = await supabase
+      .from('clientes')
+      .select('*')
+      .eq('center', center)
+      .order('registered', { ascending: false });
+    setClients(newList || []);
+  };
+
+  // 7. Borrar todos
+  const handleDeleteAll = async () => {
+    if (!window.confirm("¿Borrar TODOS los clientes?")) return;
+    const { error } = await supabase.from('clientes').delete().eq('center', center);
+    if (error) setError('Error borrando todos los clientes');
+    else setClients([]);
+  };
+
+  // ========== RENDER ==========================
   return (
     <div style={styles.page}>
       <header style={styles.header}>
@@ -129,13 +191,12 @@ export default function Crm() {
         </h1>
       </header>
       <main style={styles.main}>
-
+        {error && <div style={{ color: 'red', margin: '12px 0' }}>{error}</div>}
         {/* top bar */}
         <div style={styles.topBar}>
           <button onClick={()=>setSearchTerm('')} style={styles.link}>← Panel</button>
-          <button onClick={()=>setClients([])} style={styles.dangerBtn}>Borrar todos</button>
+          <button onClick={handleDeleteAll} style={styles.dangerBtn}>Borrar todos</button>
         </div>
-
         {/* modos */}
         <div style={styles.modeBar}>
           {['manual','import','google'].map(m=>(
@@ -148,7 +209,6 @@ export default function Crm() {
             </label>
           ))}
         </div>
-
         {/* importaciones */}
         {mode==='import' &&
           <input type="file" accept=".csv"
@@ -166,7 +226,6 @@ export default function Crm() {
             {error && <p style={styles.error}>{error}</p>}
           </div>
         }
-
         {/* alta manual */}
         {mode==='manual' &&
           (showForm
@@ -174,22 +233,7 @@ export default function Crm() {
                 data={form}
                 onChange={v=>setForm(v)}
                 onCancel={()=>{ setShowForm(false); setEditing(null); }}
-                onSave={data=> {
-                  if (editing) {
-                    setClients(cs => cs.map(c=>c.id===editing.id ? {...data, id:editing.id, registered:editing.registered} : c));
-                    setEditing(null);
-                  } else {
-                    setClients(cs=>[{ ...data, id:Date.now(), registered:new Date().toISOString() }, ...cs]);
-                  }
-                  setShowForm(false);
-                  setForm({
-                    name:'', location:'', email:'', phone:'', dni:'',
-                    experience:'', howHeard:'', dob:'', nickname:'',
-                    diveCount:'', lastDive:'', interests:[],
-                    keywords:[], concerns:'', specialNeeds:'',
-                    contactPref:'', notes:'', cursos:[]
-                  });
-                }}
+                onSave={handleSave}
               />
             : <button style={styles.primaryBtn} onClick={()=>{
                 setShowForm(true);
@@ -199,7 +243,6 @@ export default function Crm() {
               </button>
           )
         }
-
         {/* búsqueda */}
         <input
           placeholder="Buscar..."
@@ -207,7 +250,6 @@ export default function Crm() {
           onChange={e=>setSearchTerm(e.target.value)}
           style={styles.searchInput}
         />
-
         {/* tabla */}
         <div style={styles.tableWrapper}>
           <table style={styles.table}>
@@ -227,15 +269,14 @@ export default function Crm() {
                   <td style={styles.td}>{c.phone}</td>
                   <td style={styles.td}>
                     <button style={styles.smallBtn} onClick={()=>{ setDetail(c); }}>Ver</button>{' '}
-                    <button style={styles.smallBtn} onClick={()=>{ setEditing(c); setShowForm(true); }}>✏️</button>{' '}
-                    <button style={styles.smallDangerBtn} onClick={()=>setClients(cs=>cs.filter(x=>x.id!==c.id))}>🗑️</button>
+                    <button style={styles.smallBtn} onClick={()=>{ setEditing(c); setForm(c); setShowForm(true); }}>✏️</button>{' '}
+                    <button style={styles.smallDangerBtn} onClick={()=>handleDelete(c.id)}>🗑️</button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-
         {/* modal detalle */}
         {detail && (
           <div style={styles.modalOverlay} onClick={()=>setDetail(null)}>
@@ -251,68 +292,34 @@ export default function Crm() {
               <p><strong>Apodo:</strong> {detail.nickname}</p>
               <p><strong>Inmersiones:</strong> {detail.diveCount}</p>
               <p><strong>Última inmersión:</strong> {detail.lastDive}</p>
-              <p><strong>Intereses:</strong> {detail.interests.join(', ')}</p>
-              <p><strong>Palabras clave:</strong> {detail.keywords.join(', ')}</p>
+              <p><strong>Intereses:</strong> {detail.interests?.join(', ')}</p>
+              <p><strong>Palabras clave:</strong> {detail.keywords?.join(', ')}</p>
               <p><strong>Preocupaciones:</strong> {detail.concerns}</p>
               <p><strong>Necesidades:</strong> {detail.specialNeeds}</p>
               <p><strong>Contacto pre:</strong> {detail.contactPref}</p>
               <p><strong>Notas:</strong> {detail.notes}</p>
               {detail.cursos && detail.cursos.length > 0 && (
-  <div style={{marginTop:16}}>
-    <h4>Cursos completados</h4>
-    <ul>
-      {detail.cursos.map((c, i) => (
-        <li key={i}>
-          {c.curso} <span style={{color:'#888'}}>({c.fecha})</span>
-        </li>
-      ))}
-    </ul>
-  </div>
-)}
-
-              
-              {/* CURSOS COMPLETADOS */}
-              <div style={{margin:'16px 0 8px 0', background:'#f8fcff', padding:12, borderRadius:6}}>
-                <strong style={{color:'#028'}}>Cursos completados:</strong>
-                {Array.isArray(detail.cursos) && detail.cursos.length > 0 ? (
-                  <ul style={{marginLeft:18}}>
-                    {detail.cursos.map((c,i)=>(
-                      <li key={i} style={{marginBottom:3}}>
-                        {c.curso} — <span style={{color:'#666'}}>{c.fecha}</span>
-                        <button
-                          style={{marginLeft:12, color:'#d24', background:'none', border:'none', cursor:'pointer', fontWeight:600}}
-                          title="Eliminar curso"
-                          onClick={()=>{
-                            if(window.confirm(`¿Eliminar el curso "${c.curso}" de ${detail.name}?`)){
-                              // Eliminamos el curso de este cliente
-                              setClients(clients => clients.map(cl =>
-                                cl.id === detail.id
-                                ? {...cl, cursos: cl.cursos.filter((_,j)=>j!==i)}
-                                : cl
-                              ));
-                              setDetail({...detail, cursos: detail.cursos.filter((_,j)=>j!==i)});
-                            }
-                          }}
-                        >🗑️</button>
+                <div style={{marginTop:16}}>
+                  <h4>Cursos completados</h4>
+                  <ul>
+                    {detail.cursos.map((c, i) => (
+                      <li key={i}>
+                        {c.curso} <span style={{color:'#888'}}>({c.fecha})</span>
                       </li>
                     ))}
                   </ul>
-                ) : (
-                  <div style={{color:'#aaa'}}>Ningún curso registrado</div>
-                )}
-              </div>
-              
+                </div>
+              )}
               <button style={styles.smallBtn} onClick={()=>setDetail(null)}>Cerrar</button>
             </div>
           </div>
         )}
-
       </main>
     </div>
   );
 }
 
-// formulario reutilizable
+// ========== FORMULARIO REUTILIZABLE ===============
 function ClientForm({ data, onChange, onCancel, onSave }) {
   const fld = [
     {k:'name', label:'Nombre completo', type:'text'},
@@ -401,19 +408,6 @@ function ClientForm({ data, onChange, onCancel, onSave }) {
               onChange={e=>onChange({...data,notes:e.target.value})}
               style={{...styles.textInput, height:80}}/>
           </div>
-          {data.cursos && data.cursos.length > 0 && (
-  <div style={{marginBottom:16}}>
-    <h4>Cursos completados</h4>
-    <ul>
-      {data.cursos.map((c, i) => (
-        <li key={i}>
-          {c.curso} <span style={{color:'#888'}}>({c.fecha})</span>
-        </li>
-      ))}
-    </ul>
-  </div>
-)}
-
           <div style={{textAlign:'right'}}>
             <button style={styles.smallBtn} type="submit">Guardar</button>{' '}
             <button style={styles.smallDangerBtn} onClick={onCancel}>Cancelar</button>
@@ -424,7 +418,7 @@ function ClientForm({ data, onChange, onCancel, onSave }) {
   );
 }
 
-// — estilos minimalistas —
+// ========== ESTILOS IGUAL ==========
 const styles = {
   page: { background: '#eef7fc', minHeight:'100vh', fontFamily:'sans-serif' },
   header: { background:'#fff', padding:16, borderBottom:'1px solid #ccc' },
@@ -453,3 +447,4 @@ const styles = {
   modal:{ background:'#fff', borderRadius:8, padding:24, width:'90%', maxWidth:500, boxShadow:'0 4px 12px rgba(0,0,0,0.2)' },
   label:{ fontWeight:500, marginBottom:4, display:'block' }
 };
+

@@ -4,6 +4,8 @@ import { useRouter }           from "next/router";
 import Link                    from "next/link";
 import { useState, useEffect } from "react";
 import { isSameDay, addDays }  from "date-fns";
+import { supabase } from '../lib/supabaseClient';
+
 
 export default function Dashboard() {
   const { data: session, status } = useSession();
@@ -13,7 +15,18 @@ export default function Dashboard() {
   const [seguimientos, setSeguimientos] = useState([]);
   const [vouchers, setVouchers]       = useState([]);
   const [upsellData, setUpsellData]   = useState([]); // Oportunidades de venta
-
+ useEffect(() => {
+    async function testSupabase() {
+      // Cambia 'clientes' por el nombre exacto de tu tabla en Supabase
+      let { data, error } = await supabase.from('clientes').select('*');
+      if (error) {
+        console.error('Error de Supabase:', error);
+      } else {
+        console.log('Clientes en Supabase:', data);
+      }
+    }
+    testSupabase();
+  }, []);
   // 1) Auth
   if (status === "loading") return <p>Cargando sesión…</p>;
   if (!session) {
