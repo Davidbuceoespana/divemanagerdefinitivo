@@ -1,20 +1,50 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 
+function getClientData(clients, name) {
+  return clients.find(c => c.name === name) || {};
+}
+
+// Helper barra de progreso
+function ProgressBar({ used, total }) {
+  const pct = Math.min(100, Math.round((used / total) * 100));
+  let color = '#1cb98b'; // verde
+  if (pct > 80) color = '#f82d2d'; // rojo cuando queda poco
+  else if (pct > 50) color = '#f6b62e'; // naranja
+  return (
+    <div style={{ background:'#eee', borderRadius:8, overflow:'hidden', margin:'8px 0', width:140 }}>
+      <div style={{
+        height:16,
+        background: color,
+        width: `${pct}%`,
+        transition: 'width 0.3s'
+      }}/>
+      <span style={{
+        position:'relative', top:-18, left:5, fontSize:12, fontWeight:600, color:'#222'
+      }}>{used}/{total}</span>
+    </div>
+  )
+}
+
 export default function Bonos() {
   const router = useRouter();
   const [center, setCenter]       = useState(undefined);
   const [clients, setClients]     = useState([]);
-  const [vouchers, setVouchers]   = useState([]); // { id, client, name, items: [{id, type, name, total, used}], history: [] }
+  const [vouchers, setVouchers]   = useState([]);
+  
+  // Buscador avanzado
+  const [searchTerm, setSearchTerm]             = useState('');
+  const [selectedClient, setSelectedClient]     = useState('');
+  const [showOpenVouchers, setShowOpenVouchers] = useState(false);
+  const [autocomplete, setAutocomplete]         = useState([]);
 
-  // Filters
-  const [selectedClient, setSelectedClient] = useState('');
-  const [searchTerm, setSearchTerm]         = useState('');
+  // Estadísticas
+  const [stats, setStats] = useState({});
 
-  // Form / Edit state
+  // Formulario
   const [editVoucher, setEditVoucher] = useState(null);
   const [name, setName]               = useState('');
-  const [newItems, setNewItems]       = useState([]); // items for create/edit
+  const [newItems, setNewItems]       = useState([]);
   const [itemType, setItemType]       = useState('dive');
   const [itemName, setItemName]       = useState('');
   const [itemTotal, setItemTotal]     = useState(1);
@@ -40,28 +70,40 @@ export default function Bonos() {
   useEffect(() => {
     if (!center) return;
     localStorage.setItem(`dive_manager_vouchers_${center}`, JSON.stringify(vouchers));
+    // Recalcular stats
+    let activos = 0, totalBonos = vouchers.length, usos = 0, top = {};
+    vouchers.forEach(v=>{
+      const abiertos = v.items.reduce((ac,it)=>ac + (it.total-it.used),0);
+      if (abiertos > 0) activos++;
+      usos += v.items.reduce((ac,it)=>ac+it.used,0);
+      top[v.client] = (top[v.client]||0)+v.items.reduce((ac,it)=>ac+it.used,0);
+    });
+    let topClients = Object.entries(top).sort((a,b)=>b[1]-a[1]).slice(0,3);
+    setStats({ totalBonos, activos, usos, topClients });
   }, [vouchers, center]);
 
-  // Añadir o actualizar voucher
+  // Autocompletar clientes en búsqueda
+  useEffect(() => {
+    if (!searchTerm) setAutocomplete([]);
+    else {
+      const l = clients.filter(c=>c.name.toLowerCase().includes(searchTerm.toLowerCase()));
+      setAutocomplete(l);
+    }
+  }, [searchTerm, clients]);
+
+  // Añadir/editar voucher
   const handleSubmit = e => {
     e.preventDefault();
     if (!selectedClient || !name || newItems.length === 0) {
       return alert('Rellena cliente, nombre y al menos un ítem.');
     }
-    const now = new Date().toISOString();
     if (editVoucher) {
-      // update
       setVouchers(vs => vs.map(v => v.id === editVoucher.id
-        ? { ...v,
-            client: selectedClient,
-            name,
-            items: newItems,
-          }
+        ? { ...v, client: selectedClient, name, items: newItems }
         : v
       ));
       setEditVoucher(null);
     } else {
-      // new
       const v = {
         id: Date.now(),
         client: selectedClient,
@@ -71,11 +113,9 @@ export default function Bonos() {
       };
       setVouchers(vs => [...vs, v]);
     }
-    // reset form
     setName(''); setNewItems([]);
   };
 
-  // Dinámico: añadir un item al form
   const handleAddItem = () => {
     if (!itemName || itemTotal < 1) return;
     setNewItems(arr => [...arr, {
@@ -96,14 +136,12 @@ export default function Bonos() {
     setEditVoucher(v);
     setSelectedClient(v.client);
     setName(v.name);
-    setNewItems(v.items.map(it => ({ ...it })));  // shallow copy
+    setNewItems(v.items.map(it => ({ ...it })));
   };
   const handleCancelEdit = () => {
     setEditVoucher(null);
     setName(''); setNewItems([]);
   };
-
-  // Borrar voucher
   const handleDelete = id => {
     if (confirm('¿Eliminar bono?')) {
       setVouchers(vs => vs.filter(v => v.id !== id));
@@ -127,73 +165,154 @@ export default function Bonos() {
     }));
   };
 
+  // WhatsApp y Email
+  const handleWhatsApp = (phone, name, bono) => {
+    if (!phone) return alert("El cliente no tiene teléfono guardado.");
+    const msg = encodeURIComponent(`¡Hola ${name}! 👋\n\nTe recordamos tu bono: ${bono.name}\n¡Nos vemos pronto bajo el agua! 🌊🐟`);
+    window.open(`https://wa.me/${phone}?text=${msg}`, '_blank');
+  };
+  const handleEmail = (email, name, bono) => {
+    if (!email) return alert("El cliente no tiene email guardado.");
+    const subject = encodeURIComponent(`Info de tu bono de buceo`);
+    const body = encodeURIComponent(`Hola ${name},\n\nAquí tienes la info de tu bono: ${bono.name}\n¡A disfrutar bajo el agua!`);
+    window.open(`mailto:${email}?subject=${subject}&body=${body}`);
+  };
+  const handlePrint = (client, bono) => {
+    const win = window.open('', '_blank');
+    win.document.write(`<html><body>
+      <h2>Bono de Buceo - Buceo España</h2>
+      <p><strong>Cliente:</strong> ${client.name}</p>
+      <p><strong>Bono:</strong> ${bono.name}</p>
+      <ul>
+      ${bono.items.map(it=>`<li>${it.name}: ${it.used}/${it.total}</li>`).join('')}
+      </ul>
+      <p>¡Gracias por confiar en Buceo España!</p>
+      </body></html>`);
+    win.print();
+    win.close();
+  };
+
   if (center === undefined) return <p>Cargando…</p>;
 
   // Filtrar lista
-  const filtered = vouchers
-    .filter(v => (!selectedClient || v.client === selectedClient))
-    .filter(v => {
-      const term = searchTerm.toLowerCase();
-      return v.name.toLowerCase().includes(term)
-        || v.client.toLowerCase().includes(term)
-        || v.items.some(it => it.name.toLowerCase().includes(term));
-    });
+  let filtered = vouchers;
+  // Filtro bono abierto
+  if (showOpenVouchers)
+    filtered = filtered.filter(v=>v.items.some(it=>it.used < it.total));
+  // Filtro cliente exacto
+  if (selectedClient)
+    filtered = filtered.filter(v => v.client === selectedClient);
+  // Filtro búsqueda libre
+  if (searchTerm)
+    filtered = filtered.filter(v =>
+      v.name.toLowerCase().includes(searchTerm.toLowerCase())
+      || v.client.toLowerCase().includes(searchTerm.toLowerCase())
+      || v.items.some(it => it.name.toLowerCase().includes(searchTerm.toLowerCase()))
+    );
+
+  // 🎨 Estilo visual
+  const mainColor = '#1cb98b', bgColor = '#f6fff9', canallaColor = '#fdc500';
+  const titleStyle = { color:mainColor, fontWeight:900, fontSize:30, marginBottom:6 };
+  const canallaPhrase = [
+    "¡El vicio no se acaba bajo el agua!",
+    "No vendemos equipo, vendemos ganas de bajar.",
+    "Bonos fresquitos, inmersiones infinitas.",
+    "¿Quién dijo que la felicidad no se compra?"
+  ];
 
   return (
-    <div style={{ padding:20, fontFamily:'sans-serif', maxWidth:900, margin:'0 auto' }}>
-      <h2>Bonos — Centro: {center}</h2>
-      <button onClick={() => router.push('/')}>&larr; Volver</button>
-
-      {/* Filtros */}
-      <div style={{ margin:'20px 0' }}>
-        <label>Cliente: </label>
-        <select value={selectedClient} onChange={e=>setSelectedClient(e.target.value)}>
-          <option value="">— Todos —</option>
-          {clients.map((c,i)=><option key={i} value={c.name}>{c.name}</option>)}
-        </select>
-        <input
-          placeholder="Buscar bonos..."
-          style={{ marginLeft:12, padding:6 }}
-          value={searchTerm}
-          onChange={e=>setSearchTerm(e.target.value)}
-        />
+    <div style={{ padding:20, fontFamily:'Poppins, Arial, sans-serif', maxWidth:1000, margin:'0 auto', background:bgColor, borderRadius:12 }}>
+      {/* Frase y cabecera */}
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+        <div>
+          <span style={{ fontSize:24, color:canallaColor, fontWeight:800 }}>{canallaPhrase[Math.floor(Math.random()*canallaPhrase.length)]}</span>
+          <h2 style={titleStyle}>Bonos — Centro: {center}</h2>
+        </div>
+        <button onClick={() => router.push('/')} style={{
+          background:mainColor, color:'#fff', fontWeight:700, border:'none',
+          borderRadius:8, padding:'10px 18px', fontSize:16, boxShadow:'0 2px 10px #0002', cursor:'pointer'
+        }}>&larr; Volver</button>
       </div>
 
-      {/* Formulario dinámico + editar */}
-      <form onSubmit={handleSubmit} style={{ marginBottom:30, border:'1px solid #ccc', padding:16, borderRadius:6 }}>
-        <h3>{editVoucher ? 'Editar bono' : 'Crear nuevo bono'}</h3>
-        <div style={{ marginBottom:12 }}>
-          <label>Cliente: </label>
-          <select
-            required
-            value={selectedClient}
-            onChange={e=>setSelectedClient(e.target.value)}
+      {/* 🔥 Resumen de estadísticas */}
+      <div style={{ background:'#fff', borderRadius:10, boxShadow:'0 2px 8px #0001', display:'flex', gap:40, alignItems:'center', padding:'16px 32px', margin:'18px 0 22px 0', fontSize:18 }}>
+        <span>🔥 <strong>{stats.activos||0}</strong> bonos activos</span>
+        <span>🤿 <strong>{stats.usos||0}</strong> usos registrados</span>
+        <span>🏆 Top clientes:&nbsp;
+          {stats.topClients && stats.topClients.length === 0 && <em>Aún sin campeones</em>}
+          {stats.topClients && stats.topClients.map(([name, count],i)=>
+            <span key={name} style={{marginLeft:6}}>
+              {i>0?', ':''}<strong>{name}</strong> ({count} usos)
+            </span>
+          )}
+        </span>
+      </div>
+
+      {/* 🎯 Filtros y buscador */}
+      <div style={{ margin:'16px 0', display:'flex', alignItems:'center', gap:18 }}>
+        <div>
+          <label style={{fontWeight:700, marginRight:4}}>Cliente:</label>
+          <input
+            style={{ padding:6, border:'1px solid #aaa', borderRadius:5, minWidth:180 }}
+            value={searchTerm}
+            placeholder="Busca cliente o bono..."
+            onChange={e=>{
+              setSearchTerm(e.target.value);
+              setSelectedClient('');
+            }}
+            list="clientes-autocomplete"
+          />
+          <datalist id="clientes-autocomplete">
+            {autocomplete.map(c=><option key={c.name} value={c.name}/>)}
+          </datalist>
+        </div>
+        <div>
+          <button
+            onClick={()=>setShowOpenVouchers(v=>!v)}
+            style={{
+              padding:'7px 12px', marginRight:6, borderRadius:5,
+              border:'none', background:showOpenVouchers ? mainColor : '#eee', color:showOpenVouchers ? '#fff':'#222',
+              fontWeight:700, fontSize:15, boxShadow:'0 1px 4px #0001', cursor:'pointer'
+            }}
           >
+            {showOpenVouchers ? '🔎 Solo bonos abiertos' : 'Ver todos'}
+          </button>
+        </div>
+      </div>
+
+      {/* 🎫 Formulario */}
+      <form onSubmit={handleSubmit} style={{ marginBottom:32, border:'2px dashed #1cb98b50', padding:18, borderRadius:9, background:'#fff', boxShadow:'0 2px 12px #0001' }}>
+        <h3 style={{color:mainColor, fontWeight:700, fontSize:22, marginBottom:14}}>
+          {editVoucher ? 'Editar bono' : 'Crea un bono y deja que empiece el vicio 🤑'}
+        </h3>
+        <div style={{ marginBottom:10 }}>
+          <label style={{ fontWeight:600 }}>Cliente: </label>
+          <select required value={selectedClient} onChange={e=>setSelectedClient(e.target.value)} style={{ padding:6, borderRadius:4, minWidth:180 }}>
             <option value="">— Elige cliente —</option>
             {clients.map((c,i)=><option key={i} value={c.name}>{c.name}</option>)}
           </select>
         </div>
-        <div style={{ marginBottom:12 }}>
-          <label>Nombre: </label>
+        <div style={{ marginBottom:10 }}>
+          <label style={{ fontWeight:600 }}>Nombre bono: </label>
           <input
-            required
-            placeholder="Nombre del bono"
+            required placeholder="Nombre del bono"
             value={name}
             onChange={e=>setName(e.target.value)}
-            style={{ padding:6, width:'60%' }}
+            style={{ padding:6, borderRadius:4, minWidth:210, marginLeft:8 }}
           />
         </div>
-        {/* Gestión dinámica de ítems */}
-        <div style={{ marginBottom:12 }}>
-          <h4>Ítems incluidos</h4>
+        {/* Ítems */}
+        <div style={{ marginBottom:10 }}>
+          <h4 style={{ fontWeight:700, color:mainColor, margin:'7px 0' }}>Ítems incluidos</h4>
           {newItems.map(it=>(
-            <div key={it.id} style={{ display:'flex', alignItems:'center', marginBottom:4 }}>
-              <span>{it.type === 'dive' ? 'Inmersiones' : 'Curso'}: {it.name} ({it.used}/{it.total})</span>
-              <button type="button" onClick={()=>handleRemoveItem(it.id)} style={{ marginLeft:8 }}>×</button>
+            <div key={it.id} style={{ display:'flex', alignItems:'center', gap:6, background:'#f7fff9', borderRadius:4, padding:'3px 8px', marginBottom:4 }}>
+              <span>{it.type==='dive'?'Inmersiones':'Curso'}: <strong>{it.name}</strong> ({it.used}/{it.total})</span>
+              <ProgressBar used={it.used} total={it.total}/>
+              <button type="button" onClick={()=>handleRemoveItem(it.id)} style={{ fontWeight:700, color:'#c00', background:'none', border:'none', fontSize:18, marginLeft:6, cursor:'pointer' }}>×</button>
             </div>
           ))}
-          <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-            <select value={itemType} onChange={e=>setItemType(e.target.value)}>
+          <div style={{ display:'flex', gap:8, alignItems:'center', marginTop:7 }}>
+            <select value={itemType} onChange={e=>setItemType(e.target.value)} style={{ padding:6, borderRadius:4 }}>
               <option value="dive">Inmersiones</option>
               <option value="course">Curso</option>
             </select>
@@ -201,73 +320,94 @@ export default function Bonos() {
               placeholder="Nombre ítem"
               value={itemName}
               onChange={e=>setItemName(e.target.value)}
-              style={{ padding:6 }}
+              style={{ padding:6, borderRadius:4 }}
             />
             <input
               type="number" min="1"
               value={itemTotal}
               onChange={e=>setItemTotal(e.target.value)}
-              style={{ width:80, padding:6 }}
+              style={{ width:80, padding:6, borderRadius:4 }}
             />
-            <button type="button" onClick={handleAddItem}>Añadir ítem</button>
+            <button type="button" onClick={handleAddItem} style={{
+              background:mainColor, color:'#fff', border:'none', borderRadius:6, padding:'7px 12px', fontWeight:700, cursor:'pointer'
+            }}>Añadir ítem</button>
           </div>
         </div>
-        <button type="submit" style={{ marginRight:8 }}>
+        <button type="submit" style={{
+          marginRight:8, background:mainColor, color:'#fff',
+          border:'none', borderRadius:7, padding:'9px 22px', fontWeight:700, fontSize:16, boxShadow:'0 2px 10px #0001'
+        }}>
           {editVoucher ? 'Guardar cambios' : 'Añadir bono'}
         </button>
-        {editVoucher && <button type="button" onClick={handleCancelEdit}>Cancelar</button>}
+        {editVoucher && <button type="button" onClick={handleCancelEdit} style={{
+          background:'#eee', color:'#222', border:'none', borderRadius:7, padding:'9px 18px', fontWeight:700, fontSize:16, marginLeft:7, cursor:'pointer'
+        }}>Cancelar</button>}
       </form>
 
-      {/* Tabla de bonos */}
-      <table style={{ width:'100%', borderCollapse:'collapse' }}>
+      {/* 🎟️ Tabla de bonos */}
+      <table style={{ width:'100%', borderCollapse:'collapse', background:'#fff', borderRadius:10, overflow:'hidden', boxShadow:'0 2px 12px #0001' }}>
         <thead>
-          <tr>
-            <th style={{ borderBottom:'1px solid #ddd', padding:8 }}>Cliente</th>
-            <th style={{ borderBottom:'1px solid #ddd', padding:8 }}>Bono</th>
-            <th style={{ borderBottom:'1px solid #ddd', padding:8 }}>Ítems</th>
-            <th style={{ borderBottom:'1px solid #ddd', padding:8 }}>Acciones</th>
+          <tr style={{ background:mainColor, color:'#fff' }}>
+            <th style={{ padding:12 }}>Cliente</th>
+            <th style={{ padding:12 }}>Bono</th>
+            <th style={{ padding:12 }}>Ítems</th>
+            <th style={{ padding:12 }}>Acciones</th>
           </tr>
         </thead>
         <tbody>
-          {filtered.map(v => (
-            <>
-              <tr key={v.id} style={{ borderBottom:'1px solid #eee' }}>
-                <td style={{ padding:8 }}>{v.client}</td>
-                <td style={{ padding:8 }}>{v.name}</td>
-                <td style={{ padding:8 }}>
-                  {v.items.map(it=> (
-                    <div key={it.id} style={{ marginBottom:4 }}>
-                      <strong>{it.name}</strong> ({it.used}/{it.total})
-                      <button
-                        onClick={() => handleUse(v.id, it.id)}
-                        disabled={it.used >= it.total}
-                        style={{ marginLeft:4 }}
-                      >+1</button>
+          {filtered.map(v => {
+            const client = getClientData(clients, v.client);
+            return (
+              <>
+                <tr key={v.id} style={{ borderBottom:'1px solid #eee', background:'#fff' }}>
+                  <td style={{ padding:10, fontWeight:600, fontSize:17, color:mainColor }}>{v.client}</td>
+                  <td style={{ padding:10 }}>{v.name}</td>
+                  <td style={{ padding:10 }}>
+                    {v.items.map(it=>(
+                      <div key={it.id} style={{ marginBottom:6, display:'flex', alignItems:'center', gap:10 }}>
+                        <span>
+                          <strong>{it.name}</strong> ({it.used}/{it.total})
+                        </span>
+                        <ProgressBar used={it.used} total={it.total}/>
+                        <button
+                          onClick={() => handleUse(v.id, it.id)}
+                          disabled={it.used >= it.total}
+                          style={{
+                            background:it.used<it.total?mainColor:'#ddd',
+                            color:'#fff', border:'none', borderRadius:5, padding:'3px 9px', marginLeft:3, fontWeight:700, cursor: it.used<it.total?'pointer':'not-allowed'
+                          }}
+                        >+1</button>
+                      </div>
+                    ))}
+                  </td>
+                  <td style={{ padding:10 }}>
+                    <div style={{ display:'flex', flexDirection:'column', gap:5 }}>
+                      <button onClick={()=>handleEdit(v)} style={{ background:'#fff', border:'1px solid #aaa', borderRadius:5, padding:'3px 8px', cursor:'pointer', fontWeight:700 }}>✏️ Editar</button>
+                      <button onClick={()=>handleDelete(v.id)} style={{ background:'#fff', border:'1px solid #aaa', borderRadius:5, padding:'3px 8px', cursor:'pointer', fontWeight:700, color:'#c00' }}>🗑️ Borrar</button>
+                      <button onClick={()=>handleWhatsApp(client.phone, v.client, v)} style={{ background:'#25D366', color:'#fff', border:'none', borderRadius:5, padding:'3px 8px', cursor:'pointer', fontWeight:700 }}>💬 WhatsApp</button>
+                      <button onClick={()=>handleEmail(client.email, v.client, v)} style={{ background:'#0077ee', color:'#fff', border:'none', borderRadius:5, padding:'3px 8px', cursor:'pointer', fontWeight:700 }}>📧 Email</button>
+                      <button onClick={()=>handlePrint(client, v)} style={{ background:'#fdc500', color:'#333', border:'none', borderRadius:5, padding:'3px 8px', cursor:'pointer', fontWeight:700 }}>🖨️ Imprimir</button>
                     </div>
-                  ))}
-                </td>
-                <td style={{ padding:8 }}>
-                  <button onClick={()=>handleEdit(v)}>✏️</button>
-                  <button onClick={()=>handleDelete(v.id)} style={{ marginLeft:8 }}>🗑️</button>
-                </td>
-              </tr>
-              <tr key={v.id+"-hist"}>
-                <td colSpan={4} style={{ padding:8 }}>
-                  <details>
-                    <summary>Historial de usos ({v.history.length})</summary>
-                    <ul>
-                      {v.history.map((h,i)=>(
-                        <li key={i}>{h.date}: {h.itemName}</li>
-                      ))}
-                      {v.history.length === 0 && <li>No hay registros.</li>}
-                    </ul>
-                  </details>
-                </td>
-              </tr>
-            </>
-          ))}
+                  </td>
+                </tr>
+                <tr key={v.id+"-hist"}>
+                  <td colSpan={4} style={{ padding:8, background:'#f9f9f9' }}>
+                    <details>
+                      <summary style={{ cursor:'pointer', fontWeight:700, color:mainColor }}>Historial de usos ({v.history.length})</summary>
+                      <ul>
+                        {v.history.map((h,i)=>(
+                          <li key={i}>{h.date}: {h.itemName}</li>
+                        ))}
+                        {v.history.length === 0 && <li>No hay registros.</li>}
+                      </ul>
+                    </details>
+                  </td>
+                </tr>
+              </>
+            )
+          })}
           {filtered.length === 0 && (
-            <tr><td colSpan={4} style={{ padding:8 }}>No hay bonos.</td></tr>
+            <tr><td colSpan={4} style={{ padding:16, color:'#777', fontWeight:600, textAlign:'center' }}>No hay bonos que coincidan.</td></tr>
           )}
         </tbody>
       </table>

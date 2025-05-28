@@ -1,82 +1,78 @@
-// pages/index.js 
 import { useSession, signOut } from "next-auth/react";
-import { useRouter }           from "next/router";
-import Link                    from "next/link";
+import { useRouter } from "next/router";
+import Link from "next/link";
 import { useState, useEffect } from "react";
-import { isSameDay, addDays }  from "date-fns";
-import { supabase } from '../lib/supabaseClient';
+import { isSameDay, addDays } from "date-fns";
 
+// ============ Bloques inteligentes (puedes separar en componentes si quieres) ============
+
+function Metric({ label, value }) {
+  return (
+    <div style={{
+      flex: "1 1 150px",
+      background: "#222",
+      color: "#fff",
+      padding: 16,
+      borderRadius: 8,
+      textAlign: "center",
+      minWidth: 120
+    }}>
+      <small style={{ opacity: 0.8 }}>{label}</small>
+      <div style={{ fontSize: 24, marginTop: 4 }}>{value}</div>
+    </div>
+  );
+}
+
+function Section({ title, items }) {
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <h2>{title}</h2>
+      {items.length === 0
+        ? <p>No hay eventos.</p>
+        : <ul style={{ paddingLeft: 16 }}>
+          {items.map(ev => (
+            <li key={ev.id || ev.start.toISOString()}>
+              <strong>{ev.title || "–sin título–"}</strong>{" "}
+              ({new Date(ev.start).toLocaleString()})
+            </li>
+          ))}
+        </ul>
+      }
+    </div>
+  );
+}
 
 export default function Dashboard() {
   const { data: session, status } = useSession();
   const router = useRouter();
-  const [events, setEvents]           = useState([]);
-  const [clients, setClients]         = useState([]);
-  const [seguimientos, setSeguimientos] = useState([]);
-  const [vouchers, setVouchers]       = useState([]);
-  const [upsellData, setUpsellData]   = useState([]); // Oportunidades de venta
- useEffect(() => {
-    async function testSupabase() {
-      // Cambia 'clientes' por el nombre exacto de tu tabla en Supabase
-      let { data, error } = await supabase.from('clientes').select('*');
-      if (error) {
-        console.error('Error de Supabase:', error);
-      } else {
-        console.log('Clientes en Supabase:', data);
-      }
-    }
-    testSupabase();
-  }, []);
-  // 1) Auth
-  if (status === "loading") return <p>Cargando sesión…</p>;
-  if (!session) {
-    router.replace("/login");
-    return null;
-  }
 
-  // 2) Carga datos desde localStorage
+  // --- Estados principales ---
+  const [events, setEvents] = useState([]);
+  const [clients, setClients] = useState([]);
+  const [seguimientos, setSeguimientos] = useState([]);
+  const [vouchers, setVouchers] = useState([]);
+  const [upsellData, setUpsellData] = useState([]); // Oportunidades de venta
+
+  // --- Cargar datos de localStorage al cargar ---
   useEffect(() => {
     const center = localStorage.getItem("active_center");
     if (!center) return;
-    // agenda
-    const ev = JSON.parse(
-      localStorage.getItem(`dive_manager_events_${center}`) || "[]"
-    ).map(e => ({ ...e, start: new Date(e.start) }));
+    const ev = JSON.parse(localStorage.getItem(`dive_manager_events_${center}`) || "[]").map(e => ({ ...e, start: new Date(e.start) }));
     setEvents(ev);
-    // crm
-    const loadedClients = JSON.parse(
-      localStorage.getItem(`dive_manager_clients_${center}`) || "[]"
-    );
-    setClients(loadedClients);
-    // seguimientos
-    setSeguimientos(JSON.parse(
-      localStorage.getItem(`dive_manager_seguimientos_${center}`) || "[]"
-    ));
-    // bonos
-    setVouchers(JSON.parse(
-      localStorage.getItem(`dive_manager_vouchers_${center}`) || "[]"
-    ));
 
-    // --- Oportunidades de venta ---
-    // Disparadores por defecto (puedes ampliar en el CRM)
+    const loadedClients = JSON.parse(localStorage.getItem(`dive_manager_clients_${center}`) || "[]");
+    setClients(loadedClients);
+
+    setSeguimientos(JSON.parse(localStorage.getItem(`dive_manager_seguimientos_${center}`) || "[]"));
+    setVouchers(JSON.parse(localStorage.getItem(`dive_manager_vouchers_${center}`) || "[]"));
+
+    // Oportunidades de venta (upsell)
     const DEFAULT_TRIGGERS = [
-      {
-        baseCourse: "Open Water",
-        minDays: 90,
-        recommend: "Advanced",
-        message: "¡Ofrécele el Advanced ya!"
-      },
-      {
-        baseCourse: "Advanced",
-        minDays: 120,
-        recommend: "Rescue",
-        message: "¡Es momento de hablarle del Rescue Diver!"
-      }
+      { baseCourse: "Open Water", minDays: 90, recommend: "Advanced", message: "¡Ofrécele el Advanced ya!" },
+      { baseCourse: "Advanced", minDays: 120, recommend: "Rescue", message: "¡Es momento de hablarle del Rescue Diver!" }
     ];
     const triggers = JSON.parse(localStorage.getItem(`dive_manager_upsell_triggers_${center}`)) || DEFAULT_TRIGGERS;
     const hoy = new Date();
-
-    // Prepara lista de cursos realizados por cliente
     let cursosRealizados = [];
     loadedClients.forEach(cliente => {
       if (Array.isArray(cliente.cursos)) {
@@ -85,20 +81,12 @@ export default function Dashboard() {
         );
       }
     });
-
-    // Busca oportunidades
     let oportunidades = [];
     cursosRealizados.forEach(item => {
       triggers.forEach(trig => {
-        // Si ha hecho el curso base hace más de X días => oportunidad
         const fechaCurso = new Date(item.fecha);
         const diasPasados = Math.floor((hoy - fechaCurso) / (1000 * 60 * 60 * 24));
-        if (
-          item.curso &&
-          trig.baseCourse &&
-          item.curso.toLowerCase() === trig.baseCourse.toLowerCase() &&
-          diasPasados >= trig.minDays
-        ) {
+        if (item.curso && trig.baseCourse && item.curso.toLowerCase() === trig.baseCourse.toLowerCase() && diasPasados >= trig.minDays) {
           oportunidades.push({
             name: item.name,
             curso: item.curso,
@@ -110,26 +98,53 @@ export default function Dashboard() {
         }
       });
     });
-
     setUpsellData(oportunidades);
   }, []);
 
-  // 3) Métricas
-  const today    = new Date();
-  const evToday  = events.filter(e => isSameDay(e.start, today));
-  const evTmrw   = events.filter(e => isSameDay(e.start, addDays(today, 1)));
+  // --- Métricas y datos resumen ---
+  const today = new Date();
+  const evToday = events.filter(e => isSameDay(e.start, today));
+  const evTmrw = events.filter(e => isSameDay(e.start, addDays(today, 1)));
   const totalCli = clients.length;
   const totalSeg = seguimientos.length;
-  const openBonos = vouchers
-    .reduce((sum, v) => sum + ((v.total || 0) - (v.used || 0)), 0);
+  const openBonos = vouchers.reduce((sum, v) => sum + ((v.total || 0) - (v.used || 0)), 0);
+
+  // --- Alarmas automáticas ---
+  const lowTanks = localStorage.getItem("dive_manager_tanks")
+    ? JSON.parse(localStorage.getItem("dive_manager_tanks")).filter(t => t.state === "bajo").length
+    : 0;
+  const equiposSinRevision = clients.filter(c => c.equipStatus === "pendiente").length;
+  const pagosPendientes = clients.filter(c => c.pagosPendientes && c.pagosPendientes > 0).length;
+
+  // --- Bloque CRM Clientes destacados ---
+  const clientesVIP = clients.filter(c => (c.tags || []).includes("VIP") || (c.tags || []).includes("viajero")).slice(0, 5);
+
+  // --- Ranking de "vicio" ---
+  const rankingVicio = clients
+    .filter(c => c.diveCount)
+    .sort((a, b) => Number(b.diveCount) - Number(a.diveCount))
+    .slice(0, 5);
+
+  // --- Recordatorios: clientes sin bucear 6+ meses ---
+  const avisos = clients.filter(c => {
+    const ultimoBuceo = c.cursos?.length ? new Date(c.cursos[c.cursos.length - 1].fecha) : null;
+    return ultimoBuceo && ((today - ultimoBuceo) / (1000 * 60 * 60 * 24)) > 180;
+  });
+
+  // --- NAV ---
+  if (status === "loading") return <p>Cargando sesión…</p>;
+  if (!session) {
+    router.replace("/login");
+    return null;
+  }
 
   return (
-    <div style={{ padding:20, fontFamily:"sans-serif" }}>
+    <div style={{ padding: 20, fontFamily: "sans-serif" }}>
       <h1>Bienvenido, {session.user.email}</h1>
-      <button onClick={() => signOut({ callbackUrl:"/login" })}>
+      <button onClick={() => signOut({ callbackUrl: "/login" })}>
         Cerrar Sesión
       </button>
-      <nav style={{ marginTop:20 }}>
+      <nav style={{ marginTop: 20 }}>
         <Link href="/crm">Crm</Link> |{" "}
         <Link href="/agenda">Agenda</Link> |{" "}
         <Link href="/bonos">Bonos</Link> |{" "}
@@ -141,91 +156,156 @@ export default function Dashboard() {
         <Link href="/manager">Manager</Link> |{" "}
       </nav>
 
-      {/* --- Métricas rápidas + Oportunidades --- */}
+      {/* --- Bloques de Métricas y Paneles Inteligentes --- */}
       <div style={{
-        display: "flex", gap:16, flexWrap:"wrap", margin: "20px 0"
+        display: "flex",
+        gap: 16,
+        flexWrap: "wrap",
+        margin: "20px 0"
       }}>
-        <Metric label="Eventos hoy"     value={evToday.length} />
-        <Metric label="Eventos mañana"  value={evTmrw.length} />
-        <Metric label="Total clientes"  value={totalCli} />
+        <Metric label="Eventos hoy" value={evToday.length} />
+        <Metric label="Eventos mañana" value={evTmrw.length} />
+        <Metric label="Total clientes" value={totalCli} />
         <Metric label="Total seguimientos" value={totalSeg} />
-        <Metric label="Bonos abiertos"  value={openBonos} />
+        <Metric label="Bonos abiertos" value={openBonos} />
 
         {/* --- Caja negra de oportunidades --- */}
         <div style={{
-          flex:"1 1 300px",
-          background:"#000",
-          color:"#fff",
-          padding:16,
-          borderRadius:8,
-          textAlign:"center",
-          minWidth:200,
-          maxWidth:320,
-          display:"flex",
-          flexDirection:"column",
-          justifyContent:"center",
-          alignItems:"center"
+          flex: "1 1 300px",
+          background: "#000",
+          color: "#fff",
+          padding: 16,
+          borderRadius: 8,
+          textAlign: "center",
+          minWidth: 200,
+          maxWidth: 320,
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          alignItems: "center"
         }}>
-          <small style={{ opacity:0.8 }}>Oportunidades de venta</small>
-          <div style={{ fontSize:24, marginTop:4, marginBottom:8, color: "#ffe300", fontWeight:"bold" }}>
+          <small style={{ opacity: 0.8 }}>Oportunidades de venta</small>
+          <div style={{ fontSize: 24, marginTop: 4, marginBottom: 8, color: "#ffe300", fontWeight: "bold" }}>
             {upsellData.length}
           </div>
           {upsellData.length === 0 ? (
-            <div style={{ color:"#aaa", fontSize:13 }}>Sin oportunidades ahora</div>
+            <div style={{ color: "#aaa", fontSize: 13 }}>Sin oportunidades ahora</div>
           ) : (
-            <ul style={{ listStyle:"none", margin:0, padding:0, fontSize:14, textAlign:"left" }}>
-              {upsellData.slice(0,6).map((o, i) => (
-                <li key={i} style={{ marginBottom:4 }}>
-                  <b>{o.name}</b> &rarr; <span style={{color:"#ffe300"}}>{o.recommend}</span>
+            <ul style={{ listStyle: "none", margin: 0, padding: 0, fontSize: 14, textAlign: "left" }}>
+              {upsellData.slice(0, 6).map((o, i) => (
+                <li key={i} style={{ marginBottom: 4 }}>
+                  <b>{o.name}</b> &rarr; <span style={{ color: "#ffe300" }}>{o.recommend}</span>
                 </li>
               ))}
               {upsellData.length > 6 &&
-                <li style={{color:"#ffe300"}}>+{upsellData.length - 6} más…</li>
+                <li style={{ color: "#ffe300" }}>+{upsellData.length - 6} más…</li>
               }
             </ul>
           )}
         </div>
+
+        {/* --- Bloque CRM Clientes destacados --- */}
+        <div style={{ flex: "1 1 300px", background: "#283593", color: "#fff", padding: 16, borderRadius: 8 }}>
+          <b>Clientes VIP/Especiales</b>
+          <ul style={{ padding: 0, margin: 0, listStyle: "none" }}>
+            {clientesVIP.map((c, i) => (
+              <li key={i}>
+                <b>{c.name}</b>
+                {c.tags && c.tags.length > 0 && (
+                  <span style={{ fontSize: 11, color: "#ffe300", marginLeft: 4 }}>
+                    {c.tags.join(", ")}
+                  </span>
+                )}
+                {/* WhatsApp directo */}
+                <a
+                  href={`https://wa.me/34${c.phone?.replace(/\D/g, '')}?text=Hola%20${encodeURIComponent(c.name)},%20¡te%20escribimos%20desde%20Buceo%20España!`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ marginLeft: 6, color: "#25d366" }}
+                  title="Enviar WhatsApp"
+                >📲</a>
+              </li>
+            ))}
+            <li>
+              <a href="/crm" style={{ color: "#ffe300", fontSize: 13, textDecoration: "underline" }}>Ver todos</a>
+            </li>
+          </ul>
+        </div>
+
+        {/* --- Alarmas automáticas --- */}
+        <div style={{ flex: "1 1 260px", background: "#d32f2f", color: "#fff", padding: 16, borderRadius: 8 }}>
+          <b>🚨 Alarmas</b>
+          <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+            {lowTanks > 0 && <li>Bajas botellas: <b>{lowTanks}</b></li>}
+            {equiposSinRevision > 0 && <li>Equipos sin revisar: <b>{equiposSinRevision}</b></li>}
+            {pagosPendientes > 0 && <li>Clientes con pagos pendientes: <b>{pagosPendientes}</b></li>}
+            {(!lowTanks && !equiposSinRevision && !pagosPendientes) && <li>Todo ok 🤿</li>}
+          </ul>
+        </div>
+
+        {/* --- Resumen del día --- */}
+        <div style={{ flex: "1 1 260px", background: "#0277bd", color: "#fff", padding: 16, borderRadius: 8 }}>
+          <b>Hoy</b>
+          <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+            <li>Reservas: <b>{evToday.length}</b></li>
+            <li>Cursos hoy: <b>{events.filter(e => isSameDay(e.start, today) && e.type === "curso").length}</b></li>
+            <li>Instructores asignados: <b>{
+              Array.from(new Set(events.filter(e => isSameDay(e.start, today)).map(e => e.instructor))).length
+            }</b></li>
+            <li>Material pendiente: <b>{clients.filter(c => c.equipStatus === "pendiente" && c.cursoHoy).length}</b></li>
+            <li>
+              Aniversarios:{" "}
+              <b>
+                {
+                  clients.filter(c =>
+                    c.cursos && c.cursos.some(cur => {
+                      const fecha = new Date(cur.fecha);
+                      return fecha.getDate() === today.getDate() && fecha.getMonth() === today.getMonth();
+                    })
+                  ).length
+                }
+              </b>
+            </li>
+          </ul>
+        </div>
+
+        {/* --- Ranking de "nivel de vicio" --- */}
+        <div style={{ flex: "1 1 220px", background: "#4caf50", color: "#fff", padding: 16, borderRadius: 8 }}>
+          <b>Top Vicio</b>
+          <ol style={{ paddingLeft: 20 }}>
+            {rankingVicio.map((c, i) => (
+              <li key={i}>
+                {c.name} <span style={{ fontSize: 12, color: "#ffe300" }}>({c.diveCount})</span>
+              </li>
+            ))}
+          </ol>
+          <small style={{ opacity: 0.7 }}>¡Gana una camiseta por 10+ inmersiones!</small>
+        </div>
+
+        {/* --- Recordatorio de seguimientos --- */}
+        <div style={{ flex: "1 1 260px", background: "#fbc02d", color: "#333", padding: 16, borderRadius: 8 }}>
+          <b>Recordatorios</b>
+          <ul>
+            {avisos.slice(0, 5).map((c, i) => (
+              <li key={i}>
+                {c.name} — <span style={{ color: "#d32f2f" }}>6+ meses sin bucear</span>
+                <a
+                  href={`https://wa.me/34${c.phone?.replace(/\D/g, '')}?text=Hola%20${encodeURIComponent(c.name)},%20te%20echamos%20de%20menos%20en%20Buceo%20España%20😉`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ marginLeft: 6, color: "#25d366" }}
+                  title="Enviar WhatsApp"
+                >📲</a>
+              </li>
+            ))}
+            {avisos.length === 0 && <li>Sin llamadas pendientes</li>}
+          </ul>
+        </div>
       </div>
 
       {/* --- Listados de eventos --- */}
-      <Section title="Eventos de Hoy"    items={evToday} />
+      <Section title="Eventos de Hoy" items={evToday} />
       <Section title="Eventos de Mañana" items={evTmrw} />
-    </div>
-  );
-}
-
-function Metric({ label, value }) {
-  return (
-    <div style={{
-      flex:"1 1 150px",
-      background:"#222",
-      color:"#fff",
-      padding:16,
-      borderRadius:8,
-      textAlign:"center",
-      minWidth:120
-    }}>
-      <small style={{ opacity:0.8 }}>{label}</small>
-      <div style={{ fontSize:24, marginTop:4 }}>{value}</div>
-    </div>
-  );
-}
-
-function Section({ title, items }) {
-  return (
-    <div style={{ marginBottom:24 }}>
-      <h2>{title}</h2>
-      {items.length === 0
-        ? <p>No hay eventos.</p>
-        : <ul style={{ paddingLeft:16 }}>
-            {items.map(ev => (
-              <li key={ev.id || ev.start.toISOString()}>
-                <strong>{ev.title || "–sin título–"}</strong>{" "}
-                ({new Date(ev.start).toLocaleString()})
-              </li>
-            ))}
-          </ul>
-      }
     </div>
   );
 }

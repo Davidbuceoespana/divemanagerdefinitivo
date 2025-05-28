@@ -1,18 +1,17 @@
-// components/Caja.js
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 
 const DEFAULT_METHODS = ['Enlace de pago', 'Efectivo', 'Clip', 'Transferencia', 'Bizum'];
 
 export default function Caja() {
-  // ——— 1) Todos los hooks al principio ———
+  // —— 1) Hooks principales ——
   const [center, setCenter]                   = useState(undefined);
-  const [products, setProducts]               = useState([]);   // { id, family, name, price, specialPrices? }
+  const [products, setProducts]               = useState([]);
   const [families, setFamilies]               = useState([]);
   const [clients, setClients]                 = useState([]);
-  const [cashiers, setCashiers]               = useState([]);   // lista de cajeros
+  const [cashiers, setCashiers]               = useState([]);
   const [newCashier, setNewCashier]           = useState('');
-  const [cart, setCart]                       = useState([]);   // { id, name, price, customPrice, qty, discountPct }
+  const [cart, setCart]                       = useState([]);
   const [selectedFamily, setSelectedFamily]   = useState('');
   const [selectedClient, setSelectedClient]   = useState('');
   const [selectedCashier, setSelectedCashier] = useState('');
@@ -25,17 +24,31 @@ export default function Caja() {
   const [viewMethods, setViewMethods]         = useState(false);
   const [editingId, setEditingId]             = useState(null);
   const [editMethod, setEditMethod]           = useState('');
-  const [total, setTotal]                     = useState(0);
   const [manualName, setManualName]           = useState("");
   const [manualPrice, setManualPrice]         = useState("");
   const [manualQty, setManualQty]             = useState(1);
-  // ——— 2) Centro activo ———
+
+  // —— Estadísticas y rankings ——
+  const [frases] = useState([
+    '¡A la caja solo se viene a sumar!',
+    'Hoy vendes como si te fuera la vida!',
+    'No vendemos equipo, vendemos ganas de bajar.',
+    'Que no te cuadre el sueldo, pero sí la caja.',
+    'Caja cuadrada, día redondo.',
+    'Hoy facturamos para el after dive.',
+    'En esta caja solo caben buenas noticias.',
+    'Si hay cash, hay buceo.',
+    'Cada venta es una historia bajo el agua.',
+    'Caja feliz, jefe feliz.',
+  ]);
+
+  // —— 2) Centro activo ——
   useEffect(() => {
     if (typeof window === 'undefined') return;
     setCenter(localStorage.getItem('active_center'));
   }, []);
 
-  // ——— 3) Productos y familias ———
+  // —— 3) Productos y familias ——
   useEffect(() => {
     if (!center) return;
     const raw = JSON.parse(localStorage.getItem(`dive_manager_products_${center}`) || '[]');
@@ -47,14 +60,14 @@ export default function Caja() {
     setFamilies([...new Set(norm.map(p => p.family))]);
   }, [center]);
 
-  // ——— 4) Clientes CRM ———
+  // —— 4) Clientes CRM ——
   useEffect(() => {
     if (!center) return;
     const raw = JSON.parse(localStorage.getItem(`dive_manager_clients_${center}`) || '[]');
     setClients(raw.map(c => c.name));
   }, [center]);
 
-  // ——— 5) Cajeros ———
+  // —— 5) Cajeros ——
   useEffect(() => {
     if (!center) return;
     const raw = localStorage.getItem(`dive_manager_cashiers_${center}`);
@@ -65,7 +78,7 @@ export default function Caja() {
     localStorage.setItem(`dive_manager_cashiers_${center}`, JSON.stringify(cashiers));
   }, [cashiers, center]);
 
-  // ——— 6) Tickets y cierres de caja ———
+  // —— 6) Tickets y cierres de caja ——
   useEffect(() => {
     if (!center) return;
     setTickets(JSON.parse(localStorage.getItem(`dive_manager_tickets_${center}`) || '[]'));
@@ -77,7 +90,7 @@ export default function Caja() {
     localStorage.setItem(`dive_manager_closures_${center}`, JSON.stringify(closures));
   }, [tickets, closures, center]);
 
-  // ——— 7) Métodos de pago dinámicos ———
+  // —— 7) Métodos de pago dinámicos ——
   useEffect(() => {
     if (!center) return;
     const raw = localStorage.getItem(`dive_manager_methods_${center}`);
@@ -88,19 +101,18 @@ export default function Caja() {
     localStorage.setItem(`dive_manager_methods_${center}`, JSON.stringify(methodsList));
   }, [methodsList, center]);
 
-  // ——— 8) Calcular total carrito ———
-  useEffect(() => {
-    setTotal(cart.reduce((sum, i) => sum + i.customPrice * i.qty, 0));
-  }, [cart]);
+  // —— 8) Calcular total carrito (con descuento) ——
+  const total = cart.reduce(
+    (sum, item) => sum + (item.customPrice * item.qty) * (1 - (item.discountPct || 0)/100),
+    0
+  );
 
-  // ——— 9) Early returns ———
+  // —— 9) Early returns ——
   if (center === undefined) return <p style={{ padding:20, fontFamily:'sans-serif' }}>Cargando…</p>;
   if (!center) return null;
-
-  // **Sin símbolo de moneda**
   const currency = '';
 
-  // ——— 10) Handlers de carrito ———
+  // —— Handlers carrito con descuento ——
   const handleAddToCart = prod => {
     const basePrice = prod.price;
     let clientPrice = basePrice;
@@ -117,23 +129,13 @@ export default function Caja() {
         : [...c, { id: prod.id, name: prod.name, price: basePrice, customPrice: clientPrice, qty:1, discountPct:0 }]
     );
   };
-  // ——— Nuevo handler: añadir producto manual al carrito ———
   const handleAddManual = () => {
     const name = manualName.trim();
     const price = parseFloat(manualPrice);
     const qty = parseInt(manualQty, 10);
-    if (!name) {
-      alert("Introduce un nombre para el producto");
-      return;
-    }
-    if (isNaN(price) || price <= 0) {
-      alert("Introduce un precio válido");
-      return;
-    }
-    if (isNaN(qty) || qty <= 0) {
-      alert("Introduce una cantidad válida");
-      return;
-    }
+    if (!name) { alert("Introduce un nombre para el producto"); return; }
+    if (isNaN(price) || price <= 0) { alert("Introduce un precio válido"); return; }
+    if (isNaN(qty) || qty <= 0) { alert("Introduce una cantidad válida"); return; }
     const id = `manual-${Date.now()}`;
     setCart(c => [
       ...c,
@@ -146,18 +148,14 @@ export default function Caja() {
   const handleQtyChange    = (id,qty)   => setCart(c=>c.map(x=>x.id===id?{...x,qty}:x));
   const handlePriceChange  = (id,p)     => setCart(c=>c.map(x=>x.id===id?{...x,customPrice:p}:x));
   const handleRemove       = id         => setCart(c=>c.filter(x=>x.id!==id));
+  const handleDiscountChange = (id, discount) =>
+    setCart(c => c.map(x => x.id === id ? { ...x, discountPct: discount } : x));
   const handleClear        = ()         => setCart([]);
 
-  // ——— 11) Cobrar → ticket + exportar compras al CRM ———
+  // —— 11) Cobrar → ticket + exportar compras al CRM ——
   const handleCharge = () => {
-    if (!selectedCashier) {
-      alert('Debes seleccionar un cajero antes de cobrar.');
-      return;
-    }
-    if (!paymentMethod) {
-      alert('Debes seleccionar una forma de pago antes de cobrar.');
-      return;
-    }
+    if (!selectedCashier) { alert('Debes seleccionar un cajero antes de cobrar.'); return; }
+    if (!paymentMethod) { alert('Debes seleccionar una forma de pago antes de cobrar.'); return; }
     const now = new Date();
     const ticket = {
       id: Date.now(),
@@ -168,11 +166,8 @@ export default function Caja() {
       items: cart,
       total
     };
-
-    // 1) Guardamos el ticket
     setTickets(t => [...t, ticket]);
-
-    // 2) Exportamos cada línea de carrito como compra al CRM
+    // Exportar cada línea de carrito como compra al CRM
     const rawClients = JSON.parse(localStorage.getItem(`dive_manager_clients_${center}`) || '[]');
     const updatedClients = rawClients.map(c => {
       if (c.name === selectedClient) {
@@ -180,25 +175,26 @@ export default function Caja() {
         const linePurchases = cart.map(item => ({
           date: now.toISOString(),
           product: item.name,
-          amount: item.customPrice * item.qty
+          amount: (item.customPrice * item.qty) * (1 - (item.discountPct || 0)/100)
         }));
         return { ...c, purchases: [...prev, ...linePurchases] };
       }
       return c;
     });
     localStorage.setItem(`dive_manager_clients_${center}`, JSON.stringify(updatedClients));
-
     alert(`Cobrado ${total.toFixed(2)}${currency}`);
     handleClear();
   };
 
-  // ——— 12) Cerrar caja → cierre histórico ———
+  // —— 12) Cerrar caja ——
   const handleCloseBox = () => {
     const now = new Date();
     const ticketCount = tickets.length;
     const totalBilled = tickets.reduce((s,t)=>s + (t.total||0), 0);
     const totalCash   = tickets.filter(t=>t.paymentMethod==='Efectivo').reduce((s,t)=>s + (t.total||0), 0);
     const totalOther  = totalBilled - totalCash;
+    // Ranking de productos vendidos en este cierre
+    const ticketsCopy = JSON.parse(JSON.stringify(tickets)); // para detalles
     const c = {
       id: Date.now(),
       date: now.toISOString(),
@@ -206,177 +202,245 @@ export default function Caja() {
       ticketCount,
       totalBilled,
       totalCash,
-      totalOther
+      totalOther,
+      tickets: ticketsCopy // para poder mostrar detalle en histórico
     };
     setClosures(v=>[...v,c]);
-    setTickets([]); // tickets ya cerrados desaparecen
+    setTickets([]);
     alert(`Caja cerrada: ${totalBilled.toFixed(2)}${currency}`);
   };
 
-  // ——— 13) Guardar edición de forma de pago ———
+  // —— 13) Guardar edición de forma de pago ——
   const saveEdit = () => {
     setTickets(t => t.map(x => x.id === editingId ? { ...x, paymentMethod: editMethod } : x));
     setEditingId(null);
   };
 
-  // ——— 14) Vista “Tickets y Cierres” ———
-  if (viewTickets) {
-  const sortedClosures = [...closures].sort((a, b) => new Date(b.date) - new Date(a.date));
-  return (
-    <div style={{
-      fontFamily: 'Arial, sans-serif',
-      maxWidth: 950,
-      margin: '0 auto',
-      background: '#fff',
-      padding: 22,
-      borderRadius: 18,
-      boxShadow: '0 2px 12px rgba(0,80,180,0.07)',
-      border: '1px solid #e2e8f0',
-      color: '#111'
-    }}>
-      <h2 style={{
-        textAlign: 'center',
-        color: '#004085',
-        fontWeight: 700,
-        fontSize: 24,
-        marginBottom: 16
-      }}>
-        Tickets y Cierres — {center}
-      </h2>
-      <div style={{ textAlign: 'right', marginBottom: 18 }}>
-        <button style={btnBlue} onClick={() => setViewTickets(false)}>← Volver</button>
-        <button style={{ ...btnBlue, background: '#28a745', marginLeft: 8 }} onClick={handleCloseBox}>
-          Cerrar caja
-        </button>
-      </div>
-      {/* Tickets abiertos */}
-      <section style={{
-        marginBottom: 36,
-        padding: 20,
-        border: '1.5px solid #0070f3',
-        borderRadius: 14,
-        background: '#f7fbfe',
-        boxShadow: '0 3px 18px rgba(0,60,200,0.04)'
-      }}>
-        <h3 style={{
-          color: '#0070f3',
-          marginTop: 0,
-          marginBottom: 18,
-          fontSize: 19,
-          fontWeight: 700
-        }}>
-          Tickets abiertos
-        </h3>
-        {tickets.length === 0
-          ? <p style={{ color: '#888', fontSize: 15 }}>No hay tickets.</p>
-          : tickets.map(t => (
-            <div key={t.id} style={{
-              marginBottom: 18,
-              padding: 14,
-              borderRadius: 8,
-              border: '1px solid #b6d4fe',
-              background: '#f4faff'
-            }}>
-              <strong style={{ color: '#004085', fontSize: 15 }}>#{t.id}</strong>
-              <span style={{ float: 'right', color: '#0070f3', fontWeight: 500, fontSize: 14 }}>
-                {new Date(t.date).toLocaleString()}
-              </span>
-              <br />
-              <span style={{ color: '#004085', fontSize: 15 }}>Cajero:</span> {t.cashier} &nbsp;•&nbsp;
-              <span style={{ color: '#004085', fontSize: 15 }}>Cliente:</span> {t.client || <em style={{ color: '#888' }}>—</em>}
-              <br />
-              {editingId === t.id ? (
-                <div style={{ marginTop: 7 }}>
-                  <select
-                    value={editMethod}
-                    onChange={e => setEditMethod(e.target.value)}
-                    style={inputStyle}
-                  >
-                    {methodsList.map(m => <option key={m} value={m}>{m}</option>)}
-                  </select>
-                  <button style={btnBlue} onClick={saveEdit}>Guardar</button>
-                  <button style={{ ...btnBlue, background: '#aaa', marginLeft: 4 }} onClick={() => setEditingId(null)}>
-                    Cancelar
-                  </button>
-                </div>
-              ) : (
-                <div style={{ marginTop: 7 }}>
-                  <span style={{ color: '#004085', fontWeight: 600 }}>Forma de pago:</span>{' '}
-                  <em style={{ color: '#0099cc', fontWeight: 600 }}>{t.paymentMethod}</em>
-                  <button
-                    onClick={() => { setEditingId(t.id); setEditMethod(t.paymentMethod); }}
-                    style={{
-                      marginLeft: 10,
-                      border: 'none',
-                      background: 'none',
-                      color: '#0070f3',
-                      fontSize: 18,
-                      cursor: 'pointer'
-                    }}
-                    title="Editar"
-                  >✏️</button>
-                </div>
-              )}
-              <div style={{
-                marginTop: 9,
-                fontSize: 17,
-                color: '#0070f3',
-                fontWeight: 700
-              }}>
-                Total: {t.total.toFixed(2)}
-              </div>
-            </div>
-          ))}
-      </section>
-      {/* Histórico de cierres de caja */}
-      <section style={{
-        padding: 20,
-        border: '1.5px solid #0070f3',
-        borderRadius: 14,
-        background: '#f0f8ff',
-        boxShadow: '0 3px 18px rgba(0,60,200,0.04)'
-      }}>
-        <h3 style={{
-          color: '#0070f3',
-          marginTop: 0,
-          marginBottom: 15,
-          fontSize: 19,
-          fontWeight: 700
-        }}>
-          Histórico de cierres de caja
-        </h3>
-        {sortedClosures.length === 0
-          ? <p style={{ color: '#888', fontSize: 15 }}>No hay cierres.</p>
-          : sortedClosures.map(c => (
-            <div key={c.id} style={{
-              marginBottom: 15,
-              padding: 12,
-              borderRadius: 7,
-              border: '1px solid #b6d4fe',
-              background: '#f7fbfe'
-            }}>
-              <strong style={{ color: '#004085', fontSize: 15 }}>#{c.id}</strong>
-              <span style={{ float: 'right', color: '#0070f3', fontWeight: 500, fontSize: 14 }}>
-                {new Date(c.date).toLocaleString()}
-              </span>
-              <br />
-              <span style={{ color: '#004085', fontSize: 15 }}>Cajero:</span> {c.cashier}
-              <br />
-              <span style={{ color: '#004085', fontSize: 15 }}>Tickets:</span> {c.ticketCount}
-              <br />
-              <span style={{ color: '#004085', fontSize: 15 }}>Facturado:</span> {(c.totalBilled || 0).toFixed(2)}
-              <br />
-              <span style={{ color: '#004085', fontSize: 15 }}>Efectivo:</span> {(c.totalCash || 0).toFixed(2)}
-              <span style={{ margin: '0 8px', color: '#aaa' }}>•</span>
-              <span style={{ color: '#004085', fontSize: 15 }}>Otros:</span> {(c.totalOther || 0).toFixed(2)}
-            </div>
-          ))}
-      </section>
-    </div>
-  );
-}
+  // —— Estadísticas para el resumen superior ——
+  // Hoy
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const totalToday = tickets
+    .filter(t => t.date.slice(0, 10) === todayStr)
+    .reduce((sum, t) => sum + (t.total || 0), 0);
+  const efectivoToday = tickets
+    .filter(t => t.date.slice(0, 10) === todayStr && t.paymentMethod === 'Efectivo')
+    .reduce((sum, t) => sum + (t.total || 0), 0);
+  const restoToday = totalToday - efectivoToday;
 
-  // ——— 15) Vista “Formas de pago” ———
+  // TOP productos histórico
+  const allTickets = [
+    ...tickets,
+    ...(closures.flatMap(c => c.tickets || []))
+  ];
+  const productCounter = {};
+  allTickets.flatMap(t => t.items).forEach(item => {
+    productCounter[item.name] = (productCounter[item.name] || 0) + item.qty;
+  });
+  const topProducts = Object.entries(productCounter)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3);
+
+  // Ranking por mes/trimestre
+  function getMonthStr(date) {
+    const d = new Date(date);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }
+  function getQuarterStr(date) {
+    const d = new Date(date);
+    const q = Math.floor(d.getMonth() / 3) + 1;
+    return `${d.getFullYear()}-Q${q}`;
+  }
+  const productSalesMonth = {};
+  const productSalesQuarter = {};
+  allTickets.forEach(t => {
+    const m = getMonthStr(t.date);
+    const q = getQuarterStr(t.date);
+    productSalesMonth[m] = productSalesMonth[m] || {};
+    productSalesQuarter[q] = productSalesQuarter[q] || {};
+    t.items.forEach(item => {
+      productSalesMonth[m][item.name] = (productSalesMonth[m][item.name] || 0) + item.qty;
+      productSalesQuarter[q][item.name] = (productSalesQuarter[q][item.name] || 0) + item.qty;
+    });
+  });
+
+  // —— VISTA “Tickets y Cierres” ——
+  if (viewTickets) {
+    const sortedClosures = [...closures].sort((a, b) => new Date(b.date) - new Date(a.date));
+    return (
+      <div style={{
+        fontFamily: 'Arial, sans-serif',
+        maxWidth: 950,
+        margin: '0 auto',
+        background: '#fff',
+        padding: 22,
+        borderRadius: 18,
+        boxShadow: '0 2px 12px rgba(0,80,180,0.07)',
+        border: '1px solid #e2e8f0',
+        color: '#111'
+      }}>
+        <h2 style={{
+          textAlign: 'center',
+          color: '#004085',
+          fontWeight: 700,
+          fontSize: 24,
+          marginBottom: 16
+        }}>
+          Tickets y Cierres — {center}
+        </h2>
+        <div style={{ textAlign: 'right', marginBottom: 18 }}>
+          <button style={btnBlue} onClick={() => setViewTickets(false)}>← Volver</button>
+          <button style={{ ...btnBlue, background: '#28a745', marginLeft: 8 }} onClick={handleCloseBox}>
+            Cerrar caja
+          </button>
+        </div>
+        {/* Tickets abiertos */}
+        <section style={{
+          marginBottom: 36,
+          padding: 20,
+          border: '1.5px solid #0070f3',
+          borderRadius: 14,
+          background: '#f7fbfe',
+          boxShadow: '0 3px 18px rgba(0,60,200,0.04)'
+        }}>
+          <h3 style={{
+            color: '#0070f3',
+            marginTop: 0,
+            marginBottom: 18,
+            fontSize: 19,
+            fontWeight: 700
+          }}>
+            Tickets abiertos
+          </h3>
+          {tickets.length === 0
+            ? <p style={{ color: '#888', fontSize: 15 }}>No hay tickets.</p>
+            : tickets.map(t => (
+              <div key={t.id} style={{
+                marginBottom: 18,
+                padding: 14,
+                borderRadius: 8,
+                border: '1px solid #b6d4fe',
+                background: '#f4faff'
+              }}>
+                <strong style={{ color: '#004085', fontSize: 15 }}>#{t.id}</strong>
+                <span style={{ float: 'right', color: '#0070f3', fontWeight: 500, fontSize: 14 }}>
+                  {new Date(t.date).toLocaleString()}
+                </span>
+                <br />
+                <span style={{ color: '#004085', fontSize: 15 }}>Cajero:</span> {t.cashier} &nbsp;•&nbsp;
+                <span style={{ color: '#004085', fontSize: 15 }}>Cliente:</span> {t.client || <em style={{ color: '#888' }}>—</em>}
+                <br />
+                {editingId === t.id ? (
+                  <div style={{ marginTop: 7 }}>
+                    <select
+                      value={editMethod}
+                      onChange={e => setEditMethod(e.target.value)}
+                      style={inputStyle}
+                    >
+                      {methodsList.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                    <button style={btnBlue} onClick={saveEdit}>Guardar</button>
+                    <button style={{ ...btnBlue, background: '#aaa', marginLeft: 4 }} onClick={() => setEditingId(null)}>
+                      Cancelar
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ marginTop: 7 }}>
+                    <span style={{ color: '#004085', fontWeight: 600 }}>Forma de pago:</span>{' '}
+                    <em style={{ color: '#0099cc', fontWeight: 600 }}>{t.paymentMethod}</em>
+                    <button
+                      onClick={() => { setEditingId(t.id); setEditMethod(t.paymentMethod); }}
+                      style={{
+                        marginLeft: 10,
+                        border: 'none',
+                        background: 'none',
+                        color: '#0070f3',
+                        fontSize: 18,
+                        cursor: 'pointer'
+                      }}
+                      title="Editar"
+                    >✏️</button>
+                  </div>
+                )}
+                <div style={{
+                  marginTop: 9,
+                  fontSize: 17,
+                  color: '#0070f3',
+                  fontWeight: 700
+                }}>
+                  Total: {t.total.toFixed(2)}
+                </div>
+              </div>
+            ))}
+        </section>
+        {/* Histórico de cierres de caja */}
+        <section style={{
+          padding: 20,
+          border: '1.5px solid #0070f3',
+          borderRadius: 14,
+          background: '#f0f8ff',
+          boxShadow: '0 3px 18px rgba(0,60,200,0.04)'
+        }}>
+          <h3 style={{
+            color: '#0070f3',
+            marginTop: 0,
+            marginBottom: 15,
+            fontSize: 19,
+            fontWeight: 700
+          }}>
+            Histórico de cierres de caja
+          </h3>
+          {sortedClosures.length === 0
+            ? <p style={{ color: '#888', fontSize: 15 }}>No hay cierres.</p>
+            : sortedClosures.map(c => (
+              <div key={c.id} style={{
+                marginBottom: 15,
+                padding: 12,
+                borderRadius: 7,
+                border: '1px solid #b6d4fe',
+                background: '#f7fbfe'
+              }}>
+                <strong style={{ color: '#004085', fontSize: 15 }}>#{c.id}</strong>
+                <span style={{ float: 'right', color: '#0070f3', fontWeight: 500, fontSize: 14 }}>
+                  {new Date(c.date).toLocaleString()}
+                </span>
+                <br />
+                <span style={{ color: '#004085', fontSize: 15 }}>Cajero:</span> {c.cashier}
+                <br />
+                <span style={{ color: '#004085', fontSize: 15 }}>Tickets:</span> {c.ticketCount}
+                <br />
+                <span style={{ color: '#004085', fontSize: 15 }}>Facturado:</span> {(c.totalBilled || 0).toFixed(2)}
+                <br />
+                <span style={{ color: '#004085', fontSize: 15 }}>Efectivo:</span> {(c.totalCash || 0).toFixed(2)}
+                <span style={{ margin: '0 8px', color: '#aaa' }}>•</span>
+                <span style={{ color: '#004085', fontSize: 15 }}>Otros:</span> {(c.totalOther || 0).toFixed(2)}
+                <br />
+                {/* Detalle de ventas por producto */}
+                {c.tickets && (
+                  <details style={{ marginTop: 7 }}>
+                    <summary style={{ color: '#0070f3', fontWeight: 600, cursor: 'pointer' }}>
+                      Ver ranking de productos en este cierre
+                    </summary>
+                    <ul style={{ marginLeft: 16 }}>
+                      {(() => {
+                        const prodRank = {};
+                        (c.tickets || []).flatMap(t => t.items).forEach(item => {
+                          prodRank[item.name] = (prodRank[item.name] || 0) + item.qty;
+                        });
+                        return Object.entries(prodRank).sort((a, b) => b[1] - a[1]).map(([name, qty]) =>
+                          <li key={name}>{name}: {qty}</li>
+                        );
+                      })()}
+                    </ul>
+                  </details>
+                )}
+              </div>
+            ))}
+        </section>
+      </div>
+    );
+  }
+
+  // —— VISTA “Formas de pago” ——
   if (viewMethods) {
     return (
       <div style={{ padding:20, fontFamily:'sans-serif', maxWidth:400, margin:'0 auto' }}>
@@ -397,7 +461,8 @@ export default function Caja() {
     );
   }
 
-   return (
+  // —— VISTA PRINCIPAL (TPV + Carrito con descuento y estadísticas) ——
+  return (
     <div style={{
       fontFamily: 'Arial, sans-serif',
       maxWidth: 950,
@@ -419,7 +484,84 @@ export default function Caja() {
       }}>
         TPV — Caja (Centro: {center})
       </h2>
-
+      {/* Resumen superior con estadísticas y motivación */}
+      <div style={{
+        display: 'flex',
+        gap: 22,
+        flexWrap: 'wrap',
+        alignItems: 'flex-end',
+        justifyContent: 'center',
+        margin: '24px 0 20px 0'
+      }}>
+        <div style={statsBox}>
+          <div style={{ fontWeight: 800, fontSize: 18, color: '#0070f3' }}>Facturado hoy</div>
+          <div style={{ fontWeight: 800, fontSize: 26 }}>{totalToday.toFixed(2)}</div>
+        </div>
+        <div style={statsBox}>
+          <div style={{ fontWeight: 800, fontSize: 16, color: '#155724' }}>Efectivo hoy</div>
+          <div style={{ fontWeight: 800, fontSize: 22 }}>{efectivoToday.toFixed(2)}</div>
+        </div>
+        <div style={statsBox}>
+          <div style={{ fontWeight: 800, fontSize: 15, color: '#666' }}>Otros métodos</div>
+          <div style={{ fontWeight: 800, fontSize: 18 }}>{restoToday.toFixed(2)}</div>
+        </div>
+        <div style={statsBox}>
+          <div style={{ fontWeight: 800, fontSize: 15, color: '#bb4d00' }}>Top Productos</div>
+          <ul style={{ margin: 0, padding: 0, fontWeight: 600, fontSize: 15 }}>
+            {topProducts.length ? topProducts.map(([name, qty]) => (
+              <li key={name} style={{ margin: '0 0 2px 0' }}>{name} <span style={{ color: '#0070f3', fontWeight: 700 }}>x{qty}</span></li>
+            )) : <li>—</li>}
+          </ul>
+        </div>
+        {/* Frase motivacional */}
+        <div style={{
+          background: '#e0f3fa',
+          color: '#0a5578',
+          borderRadius: 11,
+          padding: '17px 17px',
+          fontWeight: 900,
+          fontSize: 16,
+          boxShadow: '0 2px 9px rgba(0,60,200,0.07)',
+          minWidth: 160
+        }}>
+          {frases[Math.floor(Math.random()*frases.length)]}
+        </div>
+      </div>
+      {/* Ranking por meses y trimestres */}
+      <div style={{
+        display: 'flex',
+        gap: 18,
+        justifyContent: 'center',
+        marginBottom: 14,
+        flexWrap: 'wrap'
+      }}>
+        <div>
+          <div style={{ fontWeight: 700, color: '#0070f3', fontSize: 14 }}>Ranking mes actual</div>
+          <ul style={{ margin: 0, padding: 0, fontSize: 13 }}>
+            {(() => {
+              const thisMonth = getMonthStr(new Date());
+              const rank = productSalesMonth[thisMonth] || {};
+              const entries = Object.entries(rank).sort((a, b) => b[1] - a[1]).slice(0, 3);
+              return entries.length
+                ? entries.map(([name, qty]) => <li key={name}>{name} <span style={{ color: '#0070f3', fontWeight: 700 }}>x{qty}</span></li>)
+                : <li>—</li>;
+            })()}
+          </ul>
+        </div>
+        <div>
+          <div style={{ fontWeight: 700, color: '#0070f3', fontSize: 14 }}>Ranking trimestre</div>
+          <ul style={{ margin: 0, padding: 0, fontSize: 13 }}>
+            {(() => {
+              const thisQ = getQuarterStr(new Date());
+              const rank = productSalesQuarter[thisQ] || {};
+              const entries = Object.entries(rank).sort((a, b) => b[1] - a[1]).slice(0, 3);
+              return entries.length
+                ? entries.map(([name, qty]) => <li key={name}>{name} <span style={{ color: '#0070f3', fontWeight: 700 }}>x{qty}</span></li>)
+                : <li>—</li>;
+            })()}
+          </ul>
+        </div>
+      </div>
       {/* Navegación */}
       <div style={{
         marginBottom: 18,
@@ -433,7 +575,6 @@ export default function Caja() {
         <button style={navBtnStyle} onClick={() => setViewTickets(true)}>Ver tickets y cierres</button> |{' '}
         <button style={navBtnStyle} onClick={() => setViewMethods(true)}>Formas de pago</button>
       </div>
-
       {/* Cajeros */}
       <div style={{ marginBottom: 18, textAlign: 'center' }}>
         <input
@@ -459,7 +600,6 @@ export default function Caja() {
           {cashiers.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
       </div>
-
       {/* Familias + Productos + Carrito + Cobro */}
       <div style={{
         display: 'flex',
@@ -510,7 +650,7 @@ export default function Caja() {
               ))
             }
           </ul>
-          {/* Producto manual compacto y minimal */}
+          {/* Producto manual compacto */}
           <div style={{
             marginTop: 14,
             padding: 10,
@@ -569,7 +709,7 @@ export default function Caja() {
             </div>
           </div>
         </div>
-        {/* Carrito principal */}
+        {/* Carrito principal con descuento */}
         <div style={{
           flex: 1,
           background: '#f7fbfe',
@@ -608,6 +748,7 @@ export default function Caja() {
                 <th style={thStyle}>Producto</th>
                 <th style={thStyle}>Cant</th>
                 <th style={thStyle}>Precio u.</th>
+                <th style={thStyle}>Descuento %</th>
                 <th style={thStyle}>Subtotal</th>
                 <th style={thStyle}></th>
               </tr>
@@ -637,7 +778,20 @@ export default function Caja() {
                     />
                   </td>
                   <td style={{ padding: 5 }}>
-                    <strong>{(item.customPrice * item.qty).toFixed(2)}</strong>
+                    <input
+                      type="number" min={0} max={100}
+                      value={item.discountPct || 0}
+                      onChange={e => handleDiscountChange(item.id, +e.target.value)}
+                      style={{
+                        ...inputStyle, width: 50, padding: 4, fontSize: 14
+                      }}
+                      title="Descuento %"
+                    />
+                  </td>
+                  <td style={{ padding: 5 }}>
+                    <strong>
+                      {((item.customPrice * item.qty) * (1 - (item.discountPct || 0)/100)).toFixed(2)}
+                    </strong>
                   </td>
                   <td style={{ padding: 5 }}>
                     <button onClick={() => handleRemove(item.id)} style={{
@@ -654,7 +808,9 @@ export default function Caja() {
             </tbody>
           </table>
           <div style={{ marginBottom: 15, fontSize: 19, color: '#004085' }}>
-            <strong>Total: {total.toFixed(2)}</strong>
+            <strong>
+              Total: {total.toFixed(2)}
+            </strong>
           </div>
           <div style={{ marginBottom: 15 }}>
             <label style={labelStyle}>Forma de pago</label><br />
@@ -690,7 +846,8 @@ export default function Caja() {
     </div>
   );
 }
-// ——— Estilos base reutilizables (puedes ponerlos arriba si lo prefieres) ———
+
+// ——— Estilos base reutilizables ———
 const inputStyle = {
   border: '1px solid #b6d4fe',
   borderRadius: 6,
@@ -701,7 +858,6 @@ const inputStyle = {
   outline: 'none',
   marginBottom: 6
 };
-
 const btnBlue = {
   padding: '7px 15px',
   background: '#0070f3',
@@ -715,7 +871,6 @@ const btnBlue = {
   letterSpacing: 0.2,
   transition: 'background 0.2s'
 };
-
 const navBtnStyle = {
   background: 'none',
   border: 'none',
@@ -725,17 +880,23 @@ const navBtnStyle = {
   fontSize: 15,
   textDecoration: 'underline'
 };
-
 const labelStyle = {
   fontWeight: 600,
   fontSize: 15,
   color: '#004085'
 };
-
 const thStyle = {
   fontWeight: 700,
   color: '#003566',
   padding: 6,
   borderBottom: '1px solid #b6d4fe',
   fontSize: 15
+};
+const statsBox = {
+  background: '#e8f6fd',
+  border: '1px solid #b6d4fe',
+  borderRadius: 9,
+  padding: '14px 20px',
+  minWidth: 120,
+  textAlign: 'center'
 };

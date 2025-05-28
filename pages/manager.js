@@ -1,7 +1,6 @@
-// pages/manager.js
-import { useSession, signOut } from "next-auth/react";
-import { useRouter }          from "next/router";
-import { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
+// Si quieres exportar CSV, descomenta esta línea y ejecuta: npm install file-saver
+// import { saveAs } from "file-saver";
 import {
   ResponsiveContainer,
   BarChart, Bar,
@@ -9,129 +8,293 @@ import {
   XAxis, YAxis, Tooltip, Legend
 } from "recharts";
 
-const COLORS = ["#8884d8","#82ca9d","#ffc658","#ff8042"];
+// CONFIGURA TU PASSWORD AQUÍ
+const PASSWORD = "David311284";
+const COLORS = ["#8884d8", "#82ca9d", "#ffc658", "#ff8042"];
 
 export default function ManagerPage() {
-  const { data: session, status } = useSession();
-  const router = useRouter();
-
-  // 1) Mientras carga el SDK de NextAuth…
-  if (status === "loading") {
-    return <p style={{ padding:20, fontFamily:"sans-serif" }}>Cargando sesión…</p>;
-  }
-
-  // 2) Si NextAuth ya ha cargado y NO hay sesión, redirijo y corto el render
-  if (status === "unauthenticated") {
-    router.replace("/login");
-    return null;
-  }
-
-  // 3) A estas alturas status === "authenticated"
-  //    => podemos ya cargar nuestros datos de manager
-  const [events,       setEvents]       = useState([]);
+  // --- LOGIN CONTROL ---
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [pw, setPw] = useState("");
+  // --- DATA STATES ---
+  const [events, setEvents] = useState([]);
   const [reservations, setReservations] = useState([]);
-  const [clients,      setClients]      = useState([]);
-  const [vouchers,     setVouchers]     = useState([]);
-  const [expenses,     setExpenses]     = useState([]);
+  const [clients, setClients] = useState([]);
+  const [vouchers, setVouchers] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [view, setView] = useState("monthly"); // monthly | quarterly | yearly
 
+  // --- LOAD DATA ---
   useEffect(() => {
+    if (!loggedIn) return;
     const center = localStorage.getItem("active_center");
     if (!center) return;
 
-    // eventos
-    const ev = JSON.parse(
-      localStorage.getItem(`dive_manager_events_${center}`) || "[]"
-    ).map(e => ({
-      ...e,
-      start: new Date(e.start),
-      end:   new Date(e.end)
-    }));
-    setEvents(ev);
-
-    // resto de colecciones
+    setEvents(
+      (JSON.parse(localStorage.getItem(`dive_manager_events_${center}`)) || []).map(e => ({
+        ...e, start: new Date(e.start), end: new Date(e.end)
+      }))
+    );
     setReservations(
-      JSON.parse(localStorage.getItem(`dive_manager_reservations_${center}`)||"[]")
+      JSON.parse(localStorage.getItem(`dive_manager_reservations_${center}`) || "[]")
     );
     setClients(
-      JSON.parse(localStorage.getItem(`dive_manager_clients_${center}`)||"[]")
+      JSON.parse(localStorage.getItem(`dive_manager_clients_${center}`) || "[]")
     );
     setVouchers(
-      JSON.parse(localStorage.getItem(`dive_manager_vouchers_${center}`)||"[]")
+      JSON.parse(localStorage.getItem(`dive_manager_vouchers_${center}`) || "[]")
     );
-    const ex = JSON.parse(
-      localStorage.getItem(`dive_manager_expenses_${center}`)||"[]"
-    ).map(g=>({ ...g, date:new Date(g.date) }));
-    setExpenses(ex);
-  }, []);
+    setExpenses(
+      (JSON.parse(localStorage.getItem(`dive_manager_expenses_${center}`) || "[]") || [])
+        .map(g => ({ ...g, date: new Date(g.date) }))
+    );
+  }, [loggedIn]);
 
+  // --- DATA PROCESSING ---
+  // INGRESOS / GASTOS MENSUALES
   const monthlyData = useMemo(() => {
-    const year = new Date().getFullYear();
     const inc = {}, exp = {};
-    reservations.forEach(r=> {
-      const d=new Date(r.registered||r.date||r.createdAt);
-      if (d.getFullYear()!==year) return;
-      const m=d.getMonth();
-      const a=(Number(r.depositAmount)||0)
-              + (r.payments||[])
-                  .reduce((s,p)=>s+Number(p.amount||0),0);
-      inc[m]=(inc[m]||0)+a;
+    reservations.forEach(r => {
+      const d = new Date(r.registered || r.date || r.createdAt);
+      if (d.getFullYear() !== year) return;
+      const m = d.getMonth();
+      const a = (Number(r.depositAmount) || 0) +
+        (r.payments || []).reduce((s, p) => s + Number(p.amount || 0), 0);
+      inc[m] = (inc[m] || 0) + a;
     });
-    expenses.forEach(g=> {
-      const d=new Date(g.date);
-      if (d.getFullYear()!==year) return;
-      const m=d.getMonth();
-      exp[m]=(exp[m]||0)+Number(g.amount||0);
+    expenses.forEach(g => {
+      const d = new Date(g.date);
+      if (d.getFullYear() !== year) return;
+      const m = d.getMonth();
+      exp[m] = (exp[m] || 0) + Number(g.amount || 0);
     });
-    return Array.from({length:12},(_,i)=>({
-      month:i+1,
-      income:  inc[i]||0,
-      expense: exp[i]||0
+    return Array.from({ length: 12 }, (_, i) => ({
+      month: i + 1,
+      income: inc[i] || 0,
+      expense: exp[i] || 0
     }));
-  }, [reservations, expenses]);
+  }, [reservations, expenses, year]);
 
-  return (
-    <div style={{ padding:20, fontFamily:"sans-serif", maxWidth:960, margin:"0 auto" }}>
-      <button
-        onClick={()=>router.push("/")}
-        style={{
-          marginBottom:20,
-          padding:"6px 12px",
-          background:"#0070f3",
-          color:"#fff",
-          border:"none",
-          borderRadius:4,
-          cursor:"pointer"
-        }}
-      >← Volver al panel principal</button>
+  // INGRESOS / GASTOS TRIMESTRALES
+  const quarterlyData = useMemo(() => {
+    const quarters = [
+      { name: "Q1", months: [0, 1, 2] },
+      { name: "Q2", months: [3, 4, 5] },
+      { name: "Q3", months: [6, 7, 8] },
+      { name: "Q4", months: [9, 10, 11] },
+    ];
+    return quarters.map((q, i) => ({
+      quarter: q.name,
+      income: q.months.reduce((sum, m) => sum + (monthlyData[m]?.income || 0), 0),
+      expense: q.months.reduce((sum, m) => sum + (monthlyData[m]?.expense || 0), 0),
+    }));
+  }, [monthlyData]);
 
-      <h1>Zona Manager — {session.user.email}</h1>
-      <button
-        onClick={()=>signOut({ callbackUrl:"/login" })}
-        style={{
-          margin:"1rem 0",
-          padding:"8px 16px",
-          background:"#dc3545",
-          color:"white",
-          border:"none",
-          borderRadius:4,
-          cursor:"pointer"
-        }}
-      >Cerrar sesión</button>
+  // INGRESOS / GASTOS ANUALES (resumen)
+  const yearStats = useMemo(() => ({
+    totalIncome: monthlyData.reduce((s, m) => s + m.income, 0),
+    totalExpense: monthlyData.reduce((s, m) => s + m.expense, 0),
+    balance: monthlyData.reduce((s, m) => s + m.income - m.expense, 0)
+  }), [monthlyData]);
 
-      <h2>Ingresos vs Gastos por mes ({new Date().getFullYear()})</h2>
-      <div style={{ width:"100%", height:300, marginBottom:40 }}>
-        <ResponsiveContainer>
-          <BarChart data={monthlyData}>
-            <XAxis dataKey="month" label={{ value:"Mes", position:"insideBottom", offset:-5 }} />
-            <YAxis label={{ value:"€", angle:-90, position:"insideLeft" }} />
-            <Tooltip formatter={v=>v.toFixed(2)+"€"} />
-            <Legend verticalAlign="top" />
-            <Bar dataKey="income"  name="Ingresos"  fill={COLORS[0]} />
-            <Bar dataKey="expense" name="Gastos"    fill={COLORS[3]} />
-          </BarChart>
-        </ResponsiveContainer>
+  // --- HANDLERS ---
+  function resetLogin() {
+    setLoggedIn(false);
+    setPw("");
+  }
+
+  // --- RENDER LOGIN FIRST ---
+  if (!loggedIn) {
+    return (
+      <div style={{ padding: 40, maxWidth: 340, margin: "80px auto" }}>
+        <h2>Zona Manager</h2>
+        <input
+          type="password"
+          placeholder="Contraseña"
+          value={pw}
+          onChange={e => setPw(e.target.value)}
+          style={{ padding: 8, width: "100%", marginBottom: 12, fontSize: 17 }}
+        />
+        <button
+          onClick={() => setLoggedIn(pw === PASSWORD)}
+          style={{
+            background: "#0070f3",
+            color: "#fff",
+            border: "none",
+            borderRadius: 4,
+            padding: "8px 18px",
+            fontWeight: "bold",
+            fontSize: 18,
+            width: "100%"
+          }}
+        >
+          Entrar
+        </button>
+        {pw && pw !== PASSWORD && (
+          <div style={{ color: "red", marginTop: 8, fontWeight: "bold" }}>
+            Contraseña incorrecta
+          </div>
+        )}
       </div>
-      {/* …el resto de tu UI… */}
+    );
+  }
+
+  // --- DASHBOARD ---
+  return (
+    <div style={{ padding: 24, maxWidth: 1200, margin: "0 auto", fontFamily: "sans-serif" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h1>Panel Manager</h1>
+        <button onClick={resetLogin} style={{
+          background: "#dc3545",
+          color: "white",
+          border: "none",
+          borderRadius: 4,
+          padding: "6px 20px",
+          fontWeight: "bold",
+          fontSize: 16
+        }}>Cerrar sesión</button>
+      </div>
+      <hr style={{ marginBottom: 16, marginTop: 0 }} />
+
+      {/* Selector de año y vista */}
+      <div style={{ marginBottom: 24, display: "flex", gap: 18, alignItems: "center" }}>
+        <label>
+          <b>Año:</b>{" "}
+          <input
+            type="number"
+            min="2000"
+            max={new Date().getFullYear()}
+            value={year}
+            onChange={e => setYear(Number(e.target.value))}
+            style={{ padding: "4px 10px", width: 90, fontSize: 16, borderRadius: 4, border: "1px solid #aaa" }}
+          />
+        </label>
+        <button
+          style={{
+            background: view === "monthly" ? "#0070f3" : "#eee",
+            color: view === "monthly" ? "#fff" : "#222",
+            border: "none",
+            borderRadius: 4,
+            padding: "5px 12px",
+            fontWeight: "bold",
+            cursor: "pointer"
+          }}
+          onClick={() => setView("monthly")}
+        >Mensual</button>
+        <button
+          style={{
+            background: view === "quarterly" ? "#0070f3" : "#eee",
+            color: view === "quarterly" ? "#fff" : "#222",
+            border: "none",
+            borderRadius: 4,
+            padding: "5px 12px",
+            fontWeight: "bold",
+            cursor: "pointer"
+          }}
+          onClick={() => setView("quarterly")}
+        >Trimestral</button>
+        <button
+          style={{
+            background: view === "yearly" ? "#0070f3" : "#eee",
+            color: view === "yearly" ? "#fff" : "#222",
+            border: "none",
+            borderRadius: 4,
+            padding: "5px 12px",
+            fontWeight: "bold",
+            cursor: "pointer"
+          }}
+          onClick={() => setView("yearly")}
+        >Anual</button>
+      </div>
+
+      {/* GRÁFICAS */}
+      {view === "monthly" && (
+        <div>
+          <h3>Ingresos y Gastos Mensuales</h3>
+          <ResponsiveContainer width="100%" height={320}>
+            <BarChart data={monthlyData}>
+              <XAxis dataKey="month" label={{ value: "Mes", position: "insideBottom", offset: -5 }} />
+              <YAxis label={{ value: "€", angle: -90, position: "insideLeft" }} />
+              <Tooltip formatter={v => v.toFixed(2) + "€"} />
+              <Legend verticalAlign="top" />
+              <Bar dataKey="income" name="Ingresos" fill={COLORS[0]} />
+              <Bar dataKey="expense" name="Gastos" fill={COLORS[3]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+      {view === "quarterly" && (
+        <div>
+          <h3>Ingresos y Gastos Trimestrales</h3>
+          <ResponsiveContainer width="100%" height={320}>
+            <BarChart data={quarterlyData}>
+              <XAxis dataKey="quarter" />
+              <YAxis label={{ value: "€", angle: -90, position: "insideLeft" }} />
+              <Tooltip formatter={v => v.toFixed(2) + "€"} />
+              <Legend verticalAlign="top" />
+              <Bar dataKey="income" name="Ingresos" fill={COLORS[1]} />
+              <Bar dataKey="expense" name="Gastos" fill={COLORS[2]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+      {view === "yearly" && (
+        <div>
+          <h3>Resumen Anual</h3>
+          <table style={{ fontSize: 18, marginTop: 16, marginBottom: 16 }}>
+            <tbody>
+              <tr>
+                <td><b>Total ingresos:</b></td>
+                <td style={{ color: "#0070f3" }}>{yearStats.totalIncome.toFixed(2)} €</td>
+              </tr>
+              <tr>
+                <td><b>Total gastos:</b></td>
+                <td style={{ color: "#dc3545" }}>{yearStats.totalExpense.toFixed(2)} €</td>
+              </tr>
+              <tr>
+                <td><b>Balance:</b></td>
+                <td style={{ color: yearStats.balance >= 0 ? "#28a745" : "#dc3545", fontWeight: "bold" }}>
+                  {yearStats.balance.toFixed(2)} €
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <ResponsiveContainer width={400} height={250}>
+            <PieChart>
+              <Pie
+                data={[
+                  { name: "Ingresos", value: yearStats.totalIncome },
+                  { name: "Gastos", value: yearStats.totalExpense }
+                ]}
+                dataKey="value"
+                cx="50%"
+                cy="50%"
+                outerRadius={80}
+                fill="#8884d8"
+                label
+              >
+                <Cell fill={COLORS[0]} />
+                <Cell fill={COLORS[3]} />
+              </Pie>
+              <Legend />
+              <Tooltip formatter={v => v.toFixed(2) + "€"} />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Detalle extra */}
+      <div style={{ marginTop: 50 }}>
+        <h3>Resumen rápido ({year})</h3>
+        <ul>
+          <li><b>Total reservas:</b> {reservations.length}</li>
+          <li><b>Total clientes:</b> {clients.length}</li>
+          <li><b>Total gastos registrados:</b> {expenses.length}</li>
+          <li><b>Total vouchers vendidos:</b> {vouchers.length}</li>
+        </ul>
+      </div>
+      {/* Puedes añadir más análisis aquí */}
     </div>
   );
 }
