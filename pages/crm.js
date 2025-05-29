@@ -91,26 +91,29 @@ function parseCSV(csvText) {
 }
 
 export default function CrmPage() {
-  const center = typeof window !== 'undefined'
-    ? localStorage.getItem('active_center')
-    : null;
-  if (!center) return null;
+  const [center, setCenter] = useState(null);
 
-  const STORAGE_KEY = `dive_manager_clients_${center}`;
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setCenter(localStorage.getItem('active_center'));
+    }
+  }, []);
 
-  const [clients,    setClients]    = useState([]);
-  const [mode,       setMode]       = useState('manual'); // manual | import | google
-  const [file,       setFile]       = useState(null);
-  const [sheetUrl,   setSheetUrl]   = useState(() =>
+  const STORAGE_KEY = center ? `dive_manager_clients_${center}` : null;
+
+  const [clients, setClients] = useState([]);
+  const [mode, setMode] = useState('manual');
+  const [file, setFile] = useState(null);
+  const [sheetUrl, setSheetUrl] = useState(
     typeof window !== 'undefined'
       ? localStorage.getItem('sheetUrl') || ''
       : ''
   );
-  const [error,      setError]      = useState('');
+  const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [showForm,   setShowForm]   = useState(false);
-  const [editing,    setEditing]    = useState(null);
-  const [yearFilter, setYearFilter] = useState(new Date().getFullYear())
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [yearFilter, setYearFilter] = useState(new Date().getFullYear());
 
   // Persistir sheetUrl en localStorage
   useEffect(() => {
@@ -128,8 +131,42 @@ export default function CrmPage() {
   };
   const [form, setForm] = useState(initialForm);
 
-  // Función para cargar Google Sheets + polling cada 30s
-  const fetchSheet = () => {
+  // Carga inicial de clientes desde localStorage
+  useEffect(() => {
+    if (!center) return;
+    const st = localStorage.getItem(STORAGE_KEY);
+    if (st) setClients(JSON.parse(st));
+  }, [center, STORAGE_KEY]);
+
+  // Guardar cambios en clientes
+  useEffect(() => {
+    if (!center) return;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(clients));
+  }, [clients, center, STORAGE_KEY]);
+
+  // Importar CSV (con orden invertido)
+  useEffect(() => {
+    if (mode === 'import' && file) {
+      const reader = new FileReader();
+      reader.onload = e => {
+        const parsed = parseCSV(e.target.result);
+        setClients(parsed.reverse());
+      };
+      reader.readAsText(file);
+    }
+  }, [mode, file]);
+
+  // Google mode: carga inicial + polling
+  useEffect(() => {
+    if (mode === 'google') {
+      fetchSheet();
+      const id = setInterval(fetchSheet, 30000);
+      return () => clearInterval(id);
+    }
+  }, [mode, sheetUrl]);
+
+  // --- Función para cargar Google Sheets ---
+  function fetchSheet() {
     if (!sheetUrl) return;
     setError('');
     let csvUrl;
@@ -152,71 +189,28 @@ export default function CrmPage() {
         return res.text();
       })
       .then(txt => {
-  const parsed = parseCSV(txt);
-  setClients(parsed.reverse());
-})
-
+        const parsed = parseCSV(txt);
+        setClients(parsed.reverse());
+      })
       .catch(err => setError(`No se pudo cargar Google Sheet: ${err.message}`));
-  };
-
-  // Carga inicial de clientes desde localStorage
-  useEffect(() => {
-    const st = localStorage.getItem(STORAGE_KEY);
-    if (st) setClients(JSON.parse(st));
-  }, [center]);
-
-  // Guardar cambios en clientes
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(clients));
-  }, [clients, center]);
-
-  // Importar CSV (con orden invertido)
-useEffect(() => {
-  if (mode === 'import' && file) {
-    const reader = new FileReader();
-    reader.onload = e => {
-      const parsed = parseCSV(e.target.result);
-      setClients(parsed.reverse());
-    };
-    reader.readAsText(file);
   }
-}, [mode, file]);
 
-  // Google mode: carga inicial + polling
-  useEffect(() => {
-    if (mode === 'google') {
-      fetchSheet();
-      const id = setInterval(fetchSheet, 30000);
-      return () => clearInterval(id);
-    }
-  }, [mode, sheetUrl]);
-
-  // Google mode: carga inicial + polling
- useEffect(() => {
-  if (mode === 'google') {
-    fetchSheet();
-    const id = setInterval(fetchSheet, 30000);
-    return () => clearInterval(id);
-  }
-}, [mode, sheetUrl]);
-
- // ── Filtrado + Ordenado según el modo ──
-const filtered = useMemo(() => {
-  const base = mode === 'google'
-    ? [...clients].reverse()
-    : [...clients].sort((a, b) =>
-        new Date(b.registered) - new Date(a.registered)
-      );
-  if (!searchTerm) return base;
-  const t = searchTerm.toLowerCase();
-  return base.filter(c =>
-    c.name.toLowerCase().includes(t) ||
-    c.email.toLowerCase().includes(t) ||
-    c.phone.toLowerCase().includes(t) ||
-    c.city.toLowerCase().includes(t)
-  );
-}, [clients, mode, searchTerm]);
-
+  // --- Filtrado + Ordenado según el modo ---
+  const filtered = useMemo(() => {
+    const base = mode === 'google'
+      ? [...clients].reverse()
+      : [...clients].sort((a, b) =>
+          new Date(b.registered) - new Date(a.registered)
+        );
+    if (!searchTerm) return base;
+    const t = searchTerm.toLowerCase();
+    return base.filter(c =>
+      c.name.toLowerCase().includes(t) ||
+      c.email.toLowerCase().includes(t) ||
+      c.phone.toLowerCase().includes(t) ||
+      c.city.toLowerCase().includes(t)
+    );
+  }, [clients, mode, searchTerm]);
 
   // Auto-abre detalle si hay un solo resultado
   useEffect(() => {
@@ -252,9 +246,13 @@ const filtered = useMemo(() => {
   const handleDelete = id => {
     if (confirm('Borrar este cliente?')) setClients(c => c.filter(cu=>cu.id!==id));
   };
-// — NUEVO — Compras filtradas por año y total
-const purchasesYear = (form.purchases||[]).filter(p => new Date(p.date).getFullYear() === yearFilter);
-const totalYear     = purchasesYear.reduce((sum, p) => sum + p.amount, 0);
+
+// Compras filtradas por año y total
+  const purchasesYear = (form.purchases||[]).filter(p => new Date(p.date).getFullYear() === yearFilter);
+  const totalYear     = purchasesYear.reduce((sum, p) => sum + p.amount, 0);
+
+  if (center === null) return <p>Cargando CRM...</p>;
+
   return (
     <div style={styles.page}>
       <header style={styles.header}>
@@ -453,7 +451,7 @@ const totalYear     = purchasesYear.reduce((sum, p) => sum + p.amount, 0);
   )
 }
 const styles = {
-  page: { backgroundColor:'#afcda', minHeight:'100vh' },
+  page: { backgroundColor:'#afcdaa', minHeight:'100vh' }, // <-- COLOR ARREGLADO
   header: {
     background:'#fff', padding:'12px 24px',
     boxShadow:'0 2px 4px rgba(0,0,0,0.1)'
