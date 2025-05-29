@@ -7,13 +7,11 @@ import {
   PieChart, Pie, Cell,
   XAxis, YAxis, Tooltip, Legend
 } from "recharts";
-import { useState, useEffect } from "react";
 
-export default function MiComponente() {
+export function MiComponente() {
   const [center, setCenter] = useState(null);
 
-  useEffect(() => {
-    // Esto solo corre en el navegador
+   useEffect(() => {
     const c = localStorage.getItem("active_center");
     setCenter(c);
   }, []);
