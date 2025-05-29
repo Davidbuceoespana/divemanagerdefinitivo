@@ -25,7 +25,7 @@ export function MiComponente() {
 const PASSWORD = "David311284";
 const COLORS = ["#8884d8", "#82ca9d", "#ffc658", "#ff8042"];
 
-export default function ManagerPage() {
+
   // --- LOGIN CONTROL ---
   const [loggedIn, setLoggedIn] = useState(false);
   const [pw, setPw] = useState("");
