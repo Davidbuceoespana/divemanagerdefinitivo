@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react'; 
 
 // Helpers
 function daysBetween(date1, date2) {
@@ -21,32 +21,26 @@ const DEFAULT_TRIGGERS = [
 ];
 
 export default function OportunidadesVentaPro() {
-  // ====== HOOKS SIEMPRE AQUÍ ARRIBA ======
   const [center, setCenter] = useState(null);
   const [clients, setClients] = useState([]);
   const [courses, setCourses] = useState([]);
   const [triggers, setTriggers] = useState(DEFAULT_TRIGGERS);
   const [newTrig, setNewTrig] = useState({ baseCourse:"", minDays:30, recommend:"", message:"" });
-
   const [oportunidades, setOportunidades] = useState([]);
   const [showOnlyNew, setShowOnlyNew] = useState(false);
   const [search, setSearch] = useState("");
 
-  // ====== CARGA DEL CENTRO AL INICIO ======
   useEffect(() => {
     if (typeof window !== "undefined") {
       setCenter(localStorage.getItem('active_center'));
     }
   }, []);
 
-  // ====== CARGA DE DATOS CUANDO CAMBIA EL CENTRO ======
   useEffect(() => {
     if (!center) return;
-    // Clientes
     const cl = JSON.parse(localStorage.getItem(`dive_manager_clients_${center}`) || '[]');
     setClients(cl);
 
-    // Cursos (historial de cursos)
     let cs = [];
     cl.forEach(cliente => {
       if (Array.isArray(cliente.cursos)) {
@@ -57,19 +51,15 @@ export default function OportunidadesVentaPro() {
     });
     setCourses(cs);
 
-    // Gatillos
     const t = localStorage.getItem(`dive_manager_upsell_triggers_${center}`);
     if (t) setTriggers(JSON.parse(t));
     else setTriggers(DEFAULT_TRIGGERS);
 
-    // Oportunidades guardadas (persistente)
     const op = localStorage.getItem(`dive_manager_opportunities_${center}`);
     if (op) setOportunidades(JSON.parse(op));
     else setOportunidades([]);
-
   }, [center]);
 
-  // ====== GUARDAR triggers y oportunidades en localStorage al cambiar ======
   useEffect(() => {
     if (!center) return;
     localStorage.setItem(`dive_manager_upsell_triggers_${center}`, JSON.stringify(triggers));
@@ -80,9 +70,8 @@ export default function OportunidadesVentaPro() {
     localStorage.setItem(`dive_manager_opportunities_${center}`, JSON.stringify(oportunidades));
   }, [oportunidades, center]);
 
-  // ---- CALCULAR oportunidades automáticas (según triggers) Y fusionar con las editadas ----
+  // Generar oportunidades automáticas (nunca repite una ya creada)
   const hoy = new Date();
-  // Generar oportunidades “nuevas” que no están ya creadas
   let autoOportunidades = [];
   courses.forEach(item => {
     triggers.forEach(trig => {
@@ -91,7 +80,6 @@ export default function OportunidadesVentaPro() {
         item.curso.toLowerCase() === trig.baseCourse.toLowerCase() &&
         daysBetween(new Date(item.fecha), hoy) >= trig.minDays
       ) {
-        // Si no está ya creada para ese cliente/curso/trigger…
         const existe = oportunidades.find(
           o =>
             o.name === item.name &&
@@ -117,13 +105,12 @@ export default function OportunidadesVentaPro() {
     });
   });
 
-  // Unir oportunidades persistidas con las nuevas automáticas
+  // Unir persistidas + automáticas (¡pero siempre se gestiona sobre oportunidades, nunca sobre la lista filtrada!)
   let todasOportunidades = [
     ...oportunidades,
     ...autoOportunidades
   ];
 
-  // Filtros
   let oportunidadesFiltradas = todasOportunidades;
   if (showOnlyNew) {
     oportunidadesFiltradas = oportunidadesFiltradas.filter(o => o.estado === "pendiente");
@@ -134,77 +121,57 @@ export default function OportunidadesVentaPro() {
     );
   }
 
-  // --- HANDLERS ---
-  // WhatsApp y registrar contacto
-  function sendWhatsApp(idx) {
-    const o = oportunidadesFiltradas[idx];
-    if (!o.phone) { alert("El cliente no tiene teléfono"); return; }
-    const tel = "34" + o.phone.replace(/\D/g, "");
-    const msg = encodeURIComponent(`¡Hola ${o.name}! ${o.message}`);
-    window.open(`https://wa.me/${tel}?text=${msg}`, "_blank");
-    // Registrar contacto
-    actualizarOportunidad(idx, {
-      estado: "contactado",
-      fechaUltimoContacto: new Date().toISOString(),
-      historial: [
-        ...(o.historial || []),
-        { accion: "Contacto WhatsApp", fecha: new Date().toISOString(), comentario: "" }
-      ]
-    });
-  }
-
-  useEffect(() => {
-  if (center) {
-    localStorage.setItem(`dive_manager_opportunities_${center}`, JSON.stringify(oportunidades));
-  }
-}, [oportunidades, center]);
-
-function handleEstadoChange(oportunidad, nuevoEstado) {
-  setOportunidades(prev =>
-    prev.map(op =>
-      op.name === oportunidad.name && op.curso === oportunidad.curso && op.recommend === oportunidad.recommend
-        ? {
-            ...op,
-            estado: nuevoEstado,
-            historial: [
-              ...(op.historial || []),
-              { accion: "Estado: " + ESTADO_LABEL[nuevoEstado], fecha: new Date().toISOString(), comentario: "" }
-            ]
-          }
-        : op
-    )
-  );
-}
-
-  function handleComentario(idx, comentario) {
-    const o = oportunidadesFiltradas[idx];
-    actualizarOportunidad(idx, { comentarios: comentario });
-  }
-
-  function borrarOportunidad(idx) {
-    // Borrar solo si estado es descartado
-    if (!window.confirm("¿Seguro que quieres borrar esta oportunidad?")) return;
-    const o = oportunidadesFiltradas[idx];
-    setOportunidades(prev =>
-      prev.filter(
-        op => !(op.name === o.name && op.curso === o.curso && op.recommend === o.recommend)
-      )
-    );
-  }
-
-  // Actualiza la oportunidad en el array "oportunidades"
-  function actualizarOportunidad(idx, changes) {
-    const o = oportunidadesFiltradas[idx];
+  // Cambiar estado de oportunidad (¡siempre busca en array principal y actualiza!)
+  function handleEstadoChange(oportunidad, nuevoEstado) {
     setOportunidades(prev =>
       prev.map(op =>
-        op.name === o.name && op.curso === o.curso && op.recommend === o.recommend
-          ? { ...op, ...changes }
+        op.name === oportunidad.name &&
+        op.curso === oportunidad.curso &&
+        op.recommend === oportunidad.recommend
+          ? {
+              ...op,
+              estado: nuevoEstado,
+              historial: [
+                ...(op.historial || []),
+                { accion: "Estado: " + ESTADO_LABEL[nuevoEstado], fecha: new Date().toISOString(), comentario: "" }
+              ]
+            }
           : op
       )
     );
   }
 
-  // --- UI ---
+  // Cambiar comentarios
+  function handleComentario(oportunidad, comentario) {
+    setOportunidades(prev =>
+      prev.map(op =>
+        op.name === oportunidad.name &&
+        op.curso === oportunidad.curso &&
+        op.recommend === oportunidad.recommend
+          ? { ...op, comentarios: comentario }
+          : op
+      )
+    );
+  }
+
+  function sendWhatsApp(oportunidad) {
+    if (!oportunidad.phone) { alert("El cliente no tiene teléfono"); return; }
+    const tel = "34" + oportunidad.phone.replace(/\D/g, "");
+    const msg = encodeURIComponent(`¡Hola ${oportunidad.name}! ${oportunidad.message}`);
+    window.open(`https://wa.me/${tel}?text=${msg}`, "_blank");
+    // Registrar contacto automáticamente
+    handleEstadoChange(oportunidad, "contactado");
+  }
+
+  function borrarOportunidad(oportunidad) {
+    if (!window.confirm("¿Seguro que quieres borrar esta oportunidad?")) return;
+    setOportunidades(prev =>
+      prev.filter(
+        op => !(op.name === oportunidad.name && op.curso === oportunidad.curso && op.recommend === oportunidad.recommend)
+      )
+    );
+  }
+
   return (
     <div style={{ padding: 30, maxWidth: 1050, margin: '0 auto' }}>
       <button onClick={() => window.history.back()} style={{
@@ -372,7 +339,7 @@ function handleEstadoChange(oportunidad, nuevoEstado) {
         </thead>
         <tbody>
           {oportunidadesFiltradas.map((o, idx) => (
-            <tr key={idx} style={{
+            <tr key={o.name + o.curso + o.recommend} style={{
               background: o.estado === "pendiente" ? "#f8ffe7" :
                 o.estado === "contactado" ? "#f0f9ff" :
                   o.estado === "vendido" ? "#e0ffe6" :
@@ -388,13 +355,12 @@ function handleEstadoChange(oportunidad, nuevoEstado) {
               </td>
               <td>
                 <select
-  value={o.estado}
-  onChange={e => handleEstadoChange(o, e.target.value)}
-  style={{ padding: 4, borderRadius: 4, background: "#eef" }}
->
-  {ESTADOS.map(st => <option value={st} key={st}>{ESTADO_LABEL[st]}</option>)}
-</select>
-
+                  value={o.estado}
+                  onChange={e => handleEstadoChange(o, e.target.value)}
+                  style={{ padding: 4, borderRadius: 4, background: "#eef" }}
+                >
+                  {ESTADOS.map(st => <option value={st} key={st}>{ESTADO_LABEL[st]}</option>)}
+                </select>
               </td>
               <td>
                 {o.fechaUltimoContacto ? new Date(o.fechaUltimoContacto).toLocaleString() : "-"}
@@ -402,7 +368,7 @@ function handleEstadoChange(oportunidad, nuevoEstado) {
               <td>
                 <textarea
                   value={o.comentarios || ""}
-                  onChange={e => handleComentario(idx, e.target.value)}
+                  onChange={e => handleComentario(o, e.target.value)}
                   style={{ width: 140, minHeight: 34, borderRadius: 5, border: "1px solid #aaa", fontSize: 13 }}
                   placeholder="Escribe nota o comentario..."
                 />
@@ -413,9 +379,8 @@ function handleEstadoChange(oportunidad, nuevoEstado) {
                     background: '#25d366', color: '#fff', border: 'none',
                     borderRadius: 4, padding: '3px 10px', fontWeight: 'bold', marginRight: 8, cursor: "pointer"
                   }}
-                  onClick={() => sendWhatsApp(idx)}
+                  onClick={() => sendWhatsApp(o)}
                 >WhatsApp</button>
-                {/* Historial */}
                 {o.historial && o.historial.length > 0 && (
                   <button
                     style={{
@@ -430,14 +395,13 @@ function handleEstadoChange(oportunidad, nuevoEstado) {
                     )}
                   >Historial</button>
                 )}
-                {/* Borrar (solo si está descartado) */}
                 {o.estado === "descartado" && (
                   <button
                     style={{
                       background: "#ff4c4c", color: "#fff", border: 'none',
                       borderRadius: 3, padding: '2px 10px', fontSize: 14, cursor: "pointer"
                     }}
-                    onClick={() => borrarOportunidad(idx)}
+                    onClick={() => borrarOportunidad(o)}
                     title="Borrar oportunidad"
                   >🗑️</button>
                 )}
