@@ -1,17 +1,12 @@
 import React, { useState, useEffect, useMemo } from "react";
 // Si quieres exportar CSV, descomenta esta línea y ejecuta: npm install file-saver
 // import { saveAs } from "file-saver";
-import {
-  ResponsiveContainer,
-  BarChart, Bar,
-  PieChart, Pie, Cell,
-  XAxis, YAxis, Tooltip, Legend
-} from "recharts";
 
 export function MiComponente() {
   const [center, setCenter] = useState(null);
 
-   useEffect(() => {
+  useEffect(() => {
+    // Esto solo corre en el navegador
     const c = localStorage.getItem("active_center");
     setCenter(c);
   }, []);
@@ -25,7 +20,7 @@ export function MiComponente() {
 const PASSWORD = "David311284";
 const COLORS = ["#8884d8", "#82ca9d", "#ffc658", "#ff8042"];
 
-
+export default function ManagerPage() {
   // --- LOGIN CONTROL ---
   const [loggedIn, setLoggedIn] = useState(false);
   const [pw, setPw] = useState("");
