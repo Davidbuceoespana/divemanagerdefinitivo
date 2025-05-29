@@ -4,8 +4,6 @@ import Link from "next/link";
 import { useState, useEffect } from "react";
 import { isSameDay, addDays } from "date-fns";
 
-// ============ Bloques inteligentes (puedes separar en componentes si quieres) ============
-
 function Metric({ label, value }) {
   return (
     <div style={{
@@ -46,33 +44,33 @@ export default function Dashboard() {
   const { data: session, status } = useSession();
   const router = useRouter();
 
-  // --- Estados principales ---
+  // Estados principales
+  const [mounted, setMounted] = useState(false);
+  const [center, setCenter] = useState(null);
   const [events, setEvents] = useState([]);
   const [clients, setClients] = useState([]);
   const [seguimientos, setSeguimientos] = useState([]);
   const [vouchers, setVouchers] = useState([]);
-  const [upsellData, setUpsellData] = useState([]); // Oportunidades de venta
-  const [isClient, setIsClient] = useState(false); // NUEVO: Para saber si estamos en cliente
-  const [center, setCenter] = useState(null);
+  const [upsellData, setUpsellData] = useState([]);
 
-  // --- Cargar datos de localStorage al cargar ---
+  // SOLO cuando está montado el cliente cargamos los datos del navegador
   useEffect(() => {
-    setIsClient(true); // Ahora estamos en cliente
+    setMounted(true);
     if (typeof window !== "undefined") {
       setCenter(localStorage.getItem('active_center'));
     }
   }, []);
 
   useEffect(() => {
-    if (!isClient || !center) return; // Solo ejecutamos en cliente y con center
-    // Cargar todos los datos solo en el cliente y cuando tengamos center
+    if (!mounted || !center) return;
+    // Cargar datos de localStorage
     const loadedClients = JSON.parse(localStorage.getItem(`dive_manager_clients_${center}`) || "[]");
     setClients(loadedClients);
 
     setSeguimientos(JSON.parse(localStorage.getItem(`dive_manager_seguimientos_${center}`) || "[]"));
     setVouchers(JSON.parse(localStorage.getItem(`dive_manager_vouchers_${center}`) || "[]"));
 
-    // Oportunidades de venta (upsell)
+    // Upsell
     const DEFAULT_TRIGGERS = [
       { baseCourse: "Open Water", minDays: 90, recommend: "Advanced", message: "¡Ofrécele el Advanced ya!" },
       { baseCourse: "Advanced", minDays: 120, recommend: "Rescue", message: "¡Es momento de hablarle del Rescue Diver!" }
@@ -105,7 +103,15 @@ export default function Dashboard() {
       });
     });
     setUpsellData(oportunidades);
-  }, [isClient, center]);
+  }, [mounted, center]);
+
+  // Aquí el truco: NO renderices nada que dependa de localStorage hasta que esté montado y tengas center
+  if (status === "loading") return <p>Cargando sesión…</p>;
+  if (!session) {
+    router.replace("/login");
+    return null;
+  }
+  if (!mounted || !center) return <p>Cargando datos del centro...</p>;
 
   // --- Métricas y datos resumen ---
   const today = new Date();
@@ -116,9 +122,10 @@ export default function Dashboard() {
   const openBonos = vouchers.reduce((sum, v) => sum + ((v.total || 0) - (v.used || 0)), 0);
 
   // --- Alarmas automáticas ---
-  const lowTanks = (isClient && typeof window !== "undefined" && localStorage.getItem("dive_manager_tanks"))
-    ? JSON.parse(localStorage.getItem("dive_manager_tanks")).filter(t => t.state === "bajo").length
-    : 0;
+  let lowTanks = 0;
+  if (mounted && typeof window !== "undefined" && localStorage.getItem("dive_manager_tanks")) {
+    lowTanks = JSON.parse(localStorage.getItem("dive_manager_tanks")).filter(t => t.state === "bajo").length;
+  }
   const equiposSinRevision = clients.filter(c => c.equipStatus === "pendiente").length;
   const pagosPendientes = clients.filter(c => c.pagosPendientes && c.pagosPendientes > 0).length;
 
@@ -136,13 +143,6 @@ export default function Dashboard() {
     const ultimoBuceo = c.cursos?.length ? new Date(c.cursos[c.cursos.length - 1].fecha) : null;
     return ultimoBuceo && ((today - ultimoBuceo) / (1000 * 60 * 60 * 24)) > 180;
   });
-
-  // --- NAV ---
-  if (status === "loading") return <p>Cargando sesión…</p>;
-  if (!session) {
-    router.replace("/login");
-    return null;
-  }
 
   return (
     <div style={{ padding: 20, fontFamily: "sans-serif" }}>
