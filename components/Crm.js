@@ -1,5 +1,20 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
+import { useState, useEffect } from "react";
+
+export default function MiComponente() {
+  const [center, setCenter] = useState(null);
+
+  useEffect(() => {
+    // Esto solo corre en el navegador
+    const c = localStorage.getItem("active_center");
+    setCenter(c);
+  }, []);
+
+  if (!center) return <div>Cargando...</div>;
+
+  // ...tu render/JSX normal usando center...
+}
 
 // pages/crm.js  (solo reemplaza la función parseCSV)
 function parseCSV(csvText) {

@@ -7,6 +7,21 @@ import {
   PieChart, Pie, Cell,
   XAxis, YAxis, Tooltip, Legend
 } from "recharts";
+import { useState, useEffect } from "react";
+
+export default function MiComponente() {
+  const [center, setCenter] = useState(null);
+
+  useEffect(() => {
+    // Esto solo corre en el navegador
+    const c = localStorage.getItem("active_center");
+    setCenter(c);
+  }, []);
+
+  if (!center) return <div>Cargando...</div>;
+
+  // ...tu render/JSX normal usando center...
+}
 
 // CONFIGURA TU PASSWORD AQUÍ
 const PASSWORD = "David311284";
