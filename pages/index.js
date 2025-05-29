@@ -1,4 +1,4 @@
-import { useSession, signOut } from "next-auth/react";
+import { useSession, signOut } from "next-auth/react"; 
 import { useRouter } from "next/router";
 import Link from "next/link";
 import { useState, useEffect } from "react";
@@ -53,23 +53,19 @@ export default function Dashboard() {
   const [vouchers, setVouchers] = useState([]);
   const [upsellData, setUpsellData] = useState([]); // Oportunidades de venta
   const [isClient, setIsClient] = useState(false); // NUEVO: Para saber si estamos en cliente
+  const [center, setCenter] = useState(null);
 
   // --- Cargar datos de localStorage al cargar ---
   useEffect(() => {
     setIsClient(true); // Ahora estamos en cliente
+    if (typeof window !== "undefined") {
+      setCenter(localStorage.getItem('active_center'));
+    }
   }, []);
 
   useEffect(() => {
-    if (!isClient) return; // Solo ejecutamos en cliente
-
-    const [center, setCenter] = useState(null);
-useEffect(() => {
-  if (typeof window !== 'undefined') {
-    setCenter(localStorage.getItem('active_center'));
-  }
-}, []);
-
-
+    if (!isClient || !center) return; // Solo ejecutamos en cliente y con center
+    // Cargar todos los datos solo en el cliente y cuando tengamos center
     const loadedClients = JSON.parse(localStorage.getItem(`dive_manager_clients_${center}`) || "[]");
     setClients(loadedClients);
 
@@ -109,7 +105,7 @@ useEffect(() => {
       });
     });
     setUpsellData(oportunidades);
-  }, [isClient]);
+  }, [isClient, center]);
 
   // --- Métricas y datos resumen ---
   const today = new Date();
@@ -120,7 +116,7 @@ useEffect(() => {
   const openBonos = vouchers.reduce((sum, v) => sum + ((v.total || 0) - (v.used || 0)), 0);
 
   // --- Alarmas automáticas ---
-  const lowTanks = (isClient && localStorage.getItem("dive_manager_tanks"))
+  const lowTanks = (isClient && typeof window !== "undefined" && localStorage.getItem("dive_manager_tanks"))
     ? JSON.parse(localStorage.getItem("dive_manager_tanks")).filter(t => t.state === "bajo").length
     : 0;
   const equiposSinRevision = clients.filter(c => c.equipStatus === "pendiente").length;
