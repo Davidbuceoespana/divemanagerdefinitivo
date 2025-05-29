@@ -11,8 +11,13 @@ const frases = [
 
 export default function SeguimientoPage() {
   if (typeof window === 'undefined') return null;
-  const center = localStorage.getItem('active_center');
-  if (!center) return <p>Elige un centro</p>;
+  const [center, setCenter] = useState(null);
+useEffect(() => {
+  if (typeof window !== 'undefined') {
+    setCenter(localStorage.getItem('active_center'));
+  }
+}, []);
+
   const STORAGE_KEY = `dive_manager_tracking_${center}`;
   const CLIENTS_KEY = `dive_manager_clients_${center}`;
 
