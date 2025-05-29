@@ -27,10 +27,18 @@ function getStateIcon(status) {
 
 export default function Reservations() {
   // Centro activo
-  const center = typeof window !== 'undefined'
-    ? localStorage.getItem('active_center')
-    : null;
-  if (!center) return null;
+  const [center, setCenter] = useState(null);
+
+useEffect(() => {
+  if (typeof window !== "undefined") {
+    const c = localStorage.getItem('active_center');
+    setCenter(c);
+  }
+}, []);
+
+if (center === null) return <p>Cargando CRM...</p>;
+if (!center) return <p>Debes seleccionar un centro activo.</p>;
+
 
   // Claves dinámicas
   const DYN_RES_KEY     = `${STORAGE_KEY_RES}_${center}`;

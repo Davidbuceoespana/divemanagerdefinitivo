@@ -52,9 +52,16 @@ export default function Dashboard() {
   const [seguimientos, setSeguimientos] = useState([]);
   const [vouchers, setVouchers] = useState([]);
   const [upsellData, setUpsellData] = useState([]); // Oportunidades de venta
+  const [isClient, setIsClient] = useState(false); // NUEVO: Para saber si estamos en cliente
 
   // --- Cargar datos de localStorage al cargar ---
   useEffect(() => {
+    setIsClient(true); // Ahora estamos en cliente
+  }, []);
+
+  useEffect(() => {
+    if (!isClient) return; // Solo ejecutamos en cliente
+
     const center = localStorage.getItem("active_center");
     if (!center) return;
     const ev = JSON.parse(localStorage.getItem(`dive_manager_events_${center}`) || "[]").map(e => ({ ...e, start: new Date(e.start) }));
@@ -99,7 +106,7 @@ export default function Dashboard() {
       });
     });
     setUpsellData(oportunidades);
-  }, []);
+  }, [isClient]);
 
   // --- Métricas y datos resumen ---
   const today = new Date();
@@ -110,7 +117,7 @@ export default function Dashboard() {
   const openBonos = vouchers.reduce((sum, v) => sum + ((v.total || 0) - (v.used || 0)), 0);
 
   // --- Alarmas automáticas ---
-  const lowTanks = localStorage.getItem("dive_manager_tanks")
+  const lowTanks = (isClient && localStorage.getItem("dive_manager_tanks"))
     ? JSON.parse(localStorage.getItem("dive_manager_tanks")).filter(t => t.state === "bajo").length
     : 0;
   const equiposSinRevision = clients.filter(c => c.equipStatus === "pendiente").length;
@@ -309,4 +316,3 @@ export default function Dashboard() {
     </div>
   );
 }
-
