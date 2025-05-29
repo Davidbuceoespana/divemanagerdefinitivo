@@ -22,7 +22,7 @@ function parseCSV(csvText) {
       .replace(/[^a-zA-Z0-9 ]/g, '')      // quita emojis y signos
       .toLowerCase()
   );
-
+  
   console.log('CSV Headers:', rawHeaders);
   console.log('Normalized:', normalized, 'Delimiter:', JSON.stringify(delimiter));
 

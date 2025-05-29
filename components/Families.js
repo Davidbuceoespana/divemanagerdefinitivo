@@ -4,11 +4,17 @@ import Link from 'next/link';
 
 export default function Families() {
   // 1) Centro activo
-  const center = typeof window !== 'undefined'
-    ? localStorage.getItem('active_center')
-    : null;
-  if (!center) return null;
+ const [center, setCenter] = useState(null);
 
+useEffect(() => {
+  if (typeof window !== "undefined") {
+    const c = localStorage.getItem('active_center');
+    setCenter(c);
+  }
+}, []);
+
+if (center === null) return <p>Cargando CRM...</p>;
+if (!center) return <p>Debes seleccionar un centro activo.</p>;
   // 2) Clave dinámica
   const STORAGE_KEY = `dive_manager_families_${center}`;
 

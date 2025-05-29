@@ -36,7 +36,7 @@ useEffect(() => {
   }
 }, []);
 
-if (center === null) return <p>Cargando CRM...</p>;
+if(center === null) return <p>Cargando CRM...</p>;
 if (!center) return <p>Debes seleccionar un centro activo.</p>;
 
 

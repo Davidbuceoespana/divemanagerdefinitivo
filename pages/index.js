@@ -62,10 +62,13 @@ export default function Dashboard() {
   useEffect(() => {
     if (!isClient) return; // Solo ejecutamos en cliente
 
-    const center = localStorage.getItem("active_center");
-    if (!center) return;
-    const ev = JSON.parse(localStorage.getItem(`dive_manager_events_${center}`) || "[]").map(e => ({ ...e, start: new Date(e.start) }));
-    setEvents(ev);
+    const [center, setCenter] = useState(null);
+useEffect(() => {
+  if (typeof window !== 'undefined') {
+    setCenter(localStorage.getItem('active_center'));
+  }
+}, []);
+
 
     const loadedClients = JSON.parse(localStorage.getItem(`dive_manager_clients_${center}`) || "[]");
     setClients(loadedClients);

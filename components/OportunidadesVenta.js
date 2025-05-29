@@ -38,8 +38,14 @@ export default function OportunidadesVentaPro() {
 
   // Cargar datos
   useEffect(() => {
-    const center = localStorage.getItem('active_center');
-    if (!center) return;
+   const [center, setCenter] = useState(null);
+
+useEffect(() => {
+  if (typeof window !== 'undefined') {
+    setCenter(localStorage.getItem('active_center'));
+  }
+}, []);
+
 
     // Clientes
     const cl = JSON.parse(localStorage.getItem(`dive_manager_clients_${center}`) || '[]');
@@ -68,17 +74,12 @@ export default function OportunidadesVentaPro() {
   }, []);
 
   // Guardar triggers y oportunidades en localStorage al cambiar
-  useEffect(() => {
-    const center = localStorage.getItem('active_center');
-    if (!center) return;
-    localStorage.setItem(`dive_manager_upsell_triggers_${center}`, JSON.stringify(triggers));
-  }, [triggers]);
-
-  useEffect(() => {
-    const center = localStorage.getItem('active_center');
-    if (!center) return;
-    localStorage.setItem(`dive_manager_opportunities_${center}`, JSON.stringify(oportunidades));
-  }, [oportunidades]);
+  const [center, setCenter] = useState(null);
+useEffect(() => {
+  if (typeof window !== 'undefined') {
+    setCenter(localStorage.getItem('active_center'));
+  }
+}, []);
 
   // ---- CALCULAR oportunidades automáticas (según triggers) Y fusionar con las editadas ----
   const hoy = new Date();

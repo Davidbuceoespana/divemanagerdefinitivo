@@ -9,10 +9,18 @@ const METHODS = ['Enlace de pago','Efectivo','Clip','Transferencia','Bizum'];
 
 export default function Reservations() {
   // ➕ 0) Leer qué centro está activo
-  const center = typeof window !== 'undefined'
-    ? localStorage.getItem('active_center')
-    : null;
-  if (!center) return null;
+ const [center, setCenter] = useState(null);
+
+useEffect(() => {
+  if (typeof window !== "undefined") {
+    const c = localStorage.getItem('active_center');
+    setCenter(c);
+  }
+}, []);
+
+if (center === null) return <p>Cargando CRM...</p>;
+if (!center) return <p>Debes seleccionar un centro activo.</p>;
+
 
   // ➕ 1) Derivar las claves que tocan según el centro
   const DYN_RES_KEY     = `${STORAGE_KEY_RES}_${center}`;

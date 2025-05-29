@@ -36,8 +36,12 @@ export default function ManagerPage() {
   // --- LOAD DATA ---
   useEffect(() => {
     if (!loggedIn) return;
-    const center = localStorage.getItem("active_center");
-    if (!center) return;
+    const [center, setCenter] = useState(null);
+useEffect(() => {
+  if (typeof window !== 'undefined') {
+    setCenter(localStorage.getItem('active_center'));
+  }
+}, []);
 
     setEvents(
       (JSON.parse(localStorage.getItem(`dive_manager_events_${center}`)) || []).map(e => ({
