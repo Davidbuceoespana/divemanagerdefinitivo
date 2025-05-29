@@ -21,32 +21,27 @@ const DEFAULT_TRIGGERS = [
 ];
 
 export default function OportunidadesVentaPro() {
+  // ====== HOOKS SIEMPRE AQUÍ ARRIBA ======
+  const [center, setCenter] = useState(null);
   const [clients, setClients] = useState([]);
   const [courses, setCourses] = useState([]);
   const [triggers, setTriggers] = useState(DEFAULT_TRIGGERS);
   const [newTrig, setNewTrig] = useState({ baseCourse:"", minDays:30, recommend:"", message:"" });
 
-  // Oportunidades guardadas/gestionadas
   const [oportunidades, setOportunidades] = useState([]);
   const [showOnlyNew, setShowOnlyNew] = useState(false);
   const [search, setSearch] = useState("");
 
-  // Ir atrás
-  function goBack() {
-    window.history.back();
-  }
-
-  // Cargar datos
+  // ====== CARGA DEL CENTRO AL INICIO ======
   useEffect(() => {
-   const [center, setCenter] = useState(null);
+    if (typeof window !== "undefined") {
+      setCenter(localStorage.getItem('active_center'));
+    }
+  }, []);
 
-useEffect(() => {
-  if (typeof window !== 'undefined') {
-    setCenter(localStorage.getItem('active_center'));
-  }
-}, []);
-
-
+  // ====== CARGA DE DATOS CUANDO CAMBIA EL CENTRO ======
+  useEffect(() => {
+    if (!center) return;
     // Clientes
     const cl = JSON.parse(localStorage.getItem(`dive_manager_clients_${center}`) || '[]');
     setClients(cl);
@@ -71,15 +66,19 @@ useEffect(() => {
     const op = localStorage.getItem(`dive_manager_opportunities_${center}`);
     if (op) setOportunidades(JSON.parse(op));
     else setOportunidades([]);
-  }, []);
 
-  // Guardar triggers y oportunidades en localStorage al cambiar
-  const [center, setCenter] = useState(null);
-useEffect(() => {
-  if (typeof window !== 'undefined') {
-    setCenter(localStorage.getItem('active_center'));
-  }
-}, []);
+  }, [center]);
+
+  // ====== GUARDAR triggers y oportunidades en localStorage al cambiar ======
+  useEffect(() => {
+    if (!center) return;
+    localStorage.setItem(`dive_manager_upsell_triggers_${center}`, JSON.stringify(triggers));
+  }, [triggers, center]);
+
+  useEffect(() => {
+    if (!center) return;
+    localStorage.setItem(`dive_manager_opportunities_${center}`, JSON.stringify(oportunidades));
+  }, [oportunidades, center]);
 
   // ---- CALCULAR oportunidades automáticas (según triggers) Y fusionar con las editadas ----
   const hoy = new Date();
@@ -154,16 +153,28 @@ useEffect(() => {
     });
   }
 
-  function handleEstadoChange(idx, nuevoEstado) {
-    const o = oportunidadesFiltradas[idx];
-    actualizarOportunidad(idx, {
-      estado: nuevoEstado,
-      historial: [
-        ...(o.historial || []),
-        { accion: "Estado: " + ESTADO_LABEL[nuevoEstado], fecha: new Date().toISOString(), comentario: "" }
-      ]
-    });
+  useEffect(() => {
+  if (center) {
+    localStorage.setItem(`dive_manager_opportunities_${center}`, JSON.stringify(oportunidades));
   }
+}, [oportunidades, center]);
+
+function handleEstadoChange(oportunidad, nuevoEstado) {
+  setOportunidades(prev =>
+    prev.map(op =>
+      op.name === oportunidad.name && op.curso === oportunidad.curso && op.recommend === oportunidad.recommend
+        ? {
+            ...op,
+            estado: nuevoEstado,
+            historial: [
+              ...(op.historial || []),
+              { accion: "Estado: " + ESTADO_LABEL[nuevoEstado], fecha: new Date().toISOString(), comentario: "" }
+            ]
+          }
+        : op
+    )
+  );
+}
 
   function handleComentario(idx, comentario) {
     const o = oportunidadesFiltradas[idx];
@@ -196,7 +207,7 @@ useEffect(() => {
   // --- UI ---
   return (
     <div style={{ padding: 30, maxWidth: 1050, margin: '0 auto' }}>
-      <button onClick={goBack} style={{
+      <button onClick={() => window.history.back()} style={{
         marginBottom: 20, background: '#f0f7ff', color: '#155fa0',
         border: '1px solid #c3d8ef', borderRadius: 7, padding: '7px 22px', fontWeight: 'bold', fontSize: 16, cursor: 'pointer'
       }}>← Atrás</button>
@@ -376,10 +387,14 @@ useEffect(() => {
                 <br /><span style={{ fontSize: 12, color: '#888' }}>{o.message}</span>
               </td>
               <td>
-                <select value={o.estado} onChange={e => handleEstadoChange(idx, e.target.value)}
-                  style={{ padding: 4, borderRadius: 4, background: "#eef" }}>
-                  {ESTADOS.map(st => <option value={st} key={st}>{ESTADO_LABEL[st]}</option>)}
-                </select>
+                <select
+  value={o.estado}
+  onChange={e => handleEstadoChange(o, e.target.value)}
+  style={{ padding: 4, borderRadius: 4, background: "#eef" }}
+>
+  {ESTADOS.map(st => <option value={st} key={st}>{ESTADO_LABEL[st]}</option>)}
+</select>
+
               </td>
               <td>
                 {o.fechaUltimoContacto ? new Date(o.fechaUltimoContacto).toLocaleString() : "-"}

@@ -1,30 +1,28 @@
 import React, { useState, useEffect, useMemo } from "react";
-// Si quieres exportar CSV, descomenta esta línea y ejecuta: npm install file-saver
-// import { saveAs } from "file-saver";
-
-export function MiComponente() {
-  const [center, setCenter] = useState(null);
-
-  useEffect(() => {
-    // Esto solo corre en el navegador
-    const c = localStorage.getItem("active_center");
-    setCenter(c);
-  }, []);
-
-  if (!center) return <div>Cargando...</div>;
-
-  // ...tu render/JSX normal usando center...
-}
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  BarChart,
+  Bar,
+  PieChart,
+  Pie,
+  Cell
+} from 'recharts';
 
 // CONFIGURA TU PASSWORD AQUÍ
 const PASSWORD = "David311284";
 const COLORS = ["#8884d8", "#82ca9d", "#ffc658", "#ff8042"];
 
 export default function ManagerPage() {
-  // --- LOGIN CONTROL ---
+  const [center, setCenter] = useState(null);
   const [loggedIn, setLoggedIn] = useState(false);
   const [pw, setPw] = useState("");
-  // --- DATA STATES ---
   const [events, setEvents] = useState([]);
   const [reservations, setReservations] = useState([]);
   const [clients, setClients] = useState([]);
@@ -33,16 +31,16 @@ export default function ManagerPage() {
   const [year, setYear] = useState(new Date().getFullYear());
   const [view, setView] = useState("monthly"); // monthly | quarterly | yearly
 
-  // --- LOAD DATA ---
+  // Cargar center al montar
   useEffect(() => {
-    if (!loggedIn) return;
-    const [center, setCenter] = useState(null);
-useEffect(() => {
-  if (typeof window !== 'undefined') {
-    setCenter(localStorage.getItem('active_center'));
-  }
-}, []);
+    if (typeof window !== "undefined") {
+      setCenter(localStorage.getItem("active_center"));
+    }
+  }, []);
 
+  // Cargar datos SOLO si logueado y center está definido
+  useEffect(() => {
+    if (!loggedIn || !center) return;
     setEvents(
       (JSON.parse(localStorage.getItem(`dive_manager_events_${center}`)) || []).map(e => ({
         ...e, start: new Date(e.start), end: new Date(e.end)
@@ -61,7 +59,7 @@ useEffect(() => {
       (JSON.parse(localStorage.getItem(`dive_manager_expenses_${center}`) || "[]") || [])
         .map(g => ({ ...g, date: new Date(g.date) }))
     );
-  }, [loggedIn]);
+  }, [loggedIn, center]);
 
   // --- DATA PROCESSING ---
   // INGRESOS / GASTOS MENSUALES
