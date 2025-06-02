@@ -1,4 +1,4 @@
-// components/Reservations.js  
+// components/Reservations.js
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 
@@ -7,22 +7,19 @@ const STORAGE_KEY_CLIENTS = 'dive_manager_clients';
 const STATUS = ['Confirmada', 'Pendiente', 'Cancelada'];
 const METHODS = ['Enlace de pago','Efectivo','Clip','Transferencia','Bizum'];
 
-// ⚡️ OPCIONAL: Desactivar SSR para evitar errores en Vercel (Next.js 13+ appDir)
-// export const dynamic = 'force-dynamic';
-// export const ssr = false;
-
 export default function Reservations() {
-  // ➕ 0) Leer qué centro está activo
-  const [center, setCenter] = useState(null);
+  // ➕ 0) Leer qué centro está activo SOLO EN CLIENTE
+  const [center, setCenter] = useState();
+  const [isClient, setIsClient] = useState(false);
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const c = localStorage.getItem('active_center');
-      setCenter(c);
-    }
+    setIsClient(true); // Ya estamos en cliente
+    const c = typeof window !== "undefined" ? localStorage.getItem('active_center') : "";
+    setCenter(c || "");
   }, []);
 
-  if (center === null) return <p>Cargando CRM...</p>;
+  if (!isClient) return null; // Esperar hasta montar en cliente (evita error SSR)
+  if (center === undefined) return <p>Cargando CRM...</p>;
   if (!center) return <p>Debes seleccionar un centro activo.</p>;
 
   // ➕ 1) Derivar las claves que tocan según el centro
@@ -59,41 +56,23 @@ export default function Reservations() {
   useEffect(() => {
     if (!center) return;
     // ➕ usar clave dinámica para reservas
-    const st = typeof window !== "undefined" ? localStorage.getItem(DYN_RES_KEY) : null;
-    if (st) {
-      try {
-        setReservations(JSON.parse(st));
-      } catch {
-        setReservations([]);
-      }
-    } else {
-      setReservations([]);
-    }
+    const st = localStorage.getItem(DYN_RES_KEY);
+    if (st) setReservations(JSON.parse(st));
 
     // ➕ usar clave dinámica para clientes
-    const c  = typeof window !== "undefined" ? localStorage.getItem(DYN_CLIENTS_KEY) : null;
+    const c  = localStorage.getItem(DYN_CLIENTS_KEY);
     if (c) {
       try {
         const arr = JSON.parse(c);
-        if (Array.isArray(arr)) {
-          setClientOptions(arr.map(x=>x.name).filter(Boolean));
-        } else {
-          setClientOptions([]);
-        }
-      } catch {
-        setClientOptions([]);
-      }
-    } else {
-      setClientOptions([]);
+        setClientOptions(arr.map(x=>x.name).filter(Boolean));
+      } catch{}
     }
   }, [center]);
 
   useEffect(() => {
     if (!center) return;
     // ➕ persistir con clave dinámica
-    if (typeof window !== "undefined") {
-      localStorage.setItem(DYN_RES_KEY, JSON.stringify(reservations));
-    }
+    localStorage.setItem(DYN_RES_KEY, JSON.stringify(reservations));
   }, [reservations, center]);
 
   // ————— Métricas —————
@@ -187,12 +166,6 @@ export default function Reservations() {
     if (!confirm('¿Borrar esta reserva?')) return;
     setReservations(rs => rs.filter(r=>r.id!==id));
   };
-
-  // estilos en línea
-  const th  = { border:'1px solid #ccc', padding:8, background:'#f4f4f4' };
-  const td  = { border:'1px solid #ccc', padding:8 };
-  const btn = { padding:'4px 8px', marginTop:4, background:'#0070f3', color:'white', border:'none', borderRadius:4, cursor:'pointer' };
-  const inp = { width:'100%', padding:6, marginBottom:8, boxSizing:'border-box' };
 
   return (
     <div style={{ padding:20, fontFamily:'sans-serif', position:'relative' }}>
@@ -378,3 +351,9 @@ export default function Reservations() {
     </div>
   );
 }
+
+// estilos en línea
+const th  = { border:'1px solid #ccc', padding:8, background:'#f4f4f4' };
+const td  = { border:'1px solid #ccc', padding:8 };
+const btn = { padding:'4px 8px', marginTop:4, background:'#0070f3', color:'white', border:'none', borderRadius:4, cursor:'pointer' };
+const inp = { width:'100%', padding:6, marginBottom:8, boxSizing:'border-box' };
