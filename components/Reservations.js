@@ -1,4 +1,3 @@
-// components/Reservations.js
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 
@@ -8,21 +7,24 @@ const STATUS = ['Confirmada', 'Pendiente', 'Cancelada'];
 const METHODS = ['Enlace de pago','Efectivo','Clip','Transferencia','Bizum'];
 
 export default function Reservations() {
-  // ➕ 0) Leer qué centro está activo SOLO EN CLIENTE
-  const [center, setCenter] = useState();
+  // Estado para saber si estamos en cliente
   const [isClient, setIsClient] = useState(false);
+  // Estado del centro activo
+  const [center, setCenter] = useState("");
 
   useEffect(() => {
-    setIsClient(true); // Ya estamos en cliente
-    const c = typeof window !== "undefined" ? localStorage.getItem('active_center') : "";
-    setCenter(c || "");
+    setIsClient(true); // Solo después de montar
+    if (typeof window !== "undefined") {
+      const c = localStorage.getItem('active_center') || "";
+      setCenter(c);
+    }
   }, []);
 
-  if (!isClient) return null; // Esperar hasta montar en cliente (evita error SSR)
-  if (center === undefined) return <p>Cargando CRM...</p>;
+  // Esperar a que estemos en cliente y el valor de center esté seteado
+  if (!isClient) return null;
   if (!center) return <p>Debes seleccionar un centro activo.</p>;
 
-  // ➕ 1) Derivar las claves que tocan según el centro
+  // Claves dinámicas
   const DYN_RES_KEY     = `${STORAGE_KEY_RES}_${center}`;
   const DYN_CLIENTS_KEY = `${STORAGE_KEY_CLIENTS}_${center}`;
 
@@ -45,20 +47,19 @@ export default function Reservations() {
     depositAmount: '',
     depositMethod: METHODS[0],
     depositDate: '',
-    payments: [],    // { amount, method, date }
+    payments: [],
     payDate: '',
     payMethod: METHODS[0],
     payAmount: '',
     note: ''
   });
 
-  // ————— Carga inicial y persistencia —————
+  // Carga inicial solo después de tener center (y en cliente)
   useEffect(() => {
-    if (!center) return;
+    if (!isClient || !center) return;
     // ➕ usar clave dinámica para reservas
     const st = localStorage.getItem(DYN_RES_KEY);
     if (st) setReservations(JSON.parse(st));
-
     // ➕ usar clave dinámica para clientes
     const c  = localStorage.getItem(DYN_CLIENTS_KEY);
     if (c) {
@@ -67,13 +68,13 @@ export default function Reservations() {
         setClientOptions(arr.map(x=>x.name).filter(Boolean));
       } catch{}
     }
-  }, [center]);
+  // eslint-disable-next-line
+  }, [isClient, center]);
 
   useEffect(() => {
-    if (!center) return;
-    // ➕ persistir con clave dinámica
+    if (!isClient || !center) return;
     localStorage.setItem(DYN_RES_KEY, JSON.stringify(reservations));
-  }, [reservations, center]);
+  }, [reservations, center, isClient]);
 
   // ————— Métricas —————
   const total    = reservations.length;
