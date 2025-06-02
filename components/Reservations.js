@@ -26,11 +26,9 @@ function getStateIcon(status) {
 }
 
 export default function Reservations() {
-  // Estado seguro para Next.js
   const [mounted, setMounted] = useState(false);
   const [center, setCenter] = useState(null);
 
-  // Paso 1: Solo montar en cliente y leer centro
   useEffect(() => {
     setMounted(true);
     if (typeof window !== "undefined") {
@@ -39,32 +37,12 @@ export default function Reservations() {
     }
   }, []);
 
-  // Si no está montado aún, no renderizar nada (evita errores de SSR)
-  if (!mounted) return null;
+   // Protege el render hasta tener contexto de cliente
+  if (!mounted) return <p>Cargando datos del centro...</p>;
+  if (center === null) return <p>Cargando CRM...</p>;
+  if (!center) return <p>Debes seleccionar un centro activo.</p>;
 
-  // Si no hay centro, mostramos pantalla de selección
-  if (!center) {
-    return (
-      <div style={{padding:50, textAlign:'center'}}>
-        <h2>Selecciona tu centro activo</h2>
-        <p style={{marginBottom:25}}>¡Elige el centro en el que quieres trabajar!</p>
-        {CENTROS.map(c => (
-          <button
-            key={c}
-            style={{margin:12, padding:'12px 32px', fontSize:18, borderRadius:8, background:'#0070f3', color:'white', border:'none', cursor:'pointer'}}
-            onClick={() => {
-              localStorage.setItem('active_center', c);
-              setCenter(c);
-            }}
-          >
-            {c}
-          </button>
-        ))}
-      </div>
-    );
-  }
-
-  // Claves dinámicas según el centro
+    // Claves dinámicas según el centro
   const DYN_RES_KEY     = `${STORAGE_KEY_RES}_${center}`;
   const DYN_CLIENTS_KEY = `${STORAGE_KEY_CLIENTS}_${center}`;
 
