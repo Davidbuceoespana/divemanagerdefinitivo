@@ -1,7 +1,8 @@
+// pages/crm.js
 import React, { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 
-// pages/crm.js  (solo reemplaza la función parseCSV)
+// Reemplaza solamente la función parseCSV que tenías; todo lo demás está intacto.
 function parseCSV(csvText) {
   // 1) Partimos líneas
   const lines = csvText.trim().split(/\r?\n/);
@@ -28,20 +29,20 @@ function parseCSV(csvText) {
 
   // 4) Mapeamos cada encabezado a tu campo
   const keyMap = normalized.map(h => {
-    if (h.includes('nombre completo'))      return 'name';
-    if (h.includes('poblacion'))            return 'city';
-    if (h.includes('correo electronico'))   return 'email';
+    if (h.includes('nombre completo'))       return 'name';
+    if (h.includes('poblacion'))             return 'city';
+    if (h.includes('correo electronico'))    return 'email';
     if (h.includes('telefono de contacto') || h.includes('telefono')) return 'phone';
-    if (h.includes('d.n.i') || h.includes('dni')) return 'dni';
-    if (h.includes('nivel de experiencia')) return 'experience';
-    if (h.includes('como nos has conocido'))return 'referredBy';
-    if (h.includes('fecha de nacimiento'))  return 'dob';
-    if (h.includes('apodo') || h.includes('nick')) return 'nickname';
-    if (h.includes('inmersiones'))          return 'divesCount';
+    if (h.includes('d.n.i') || h.includes('dni'))   return 'dni';
+    if (h.includes('nivel de experiencia'))  return 'experience';
+    if (h.includes('como nos has conocido')) return 'referredBy';
+    if (h.includes('fecha de nacimiento'))   return 'dob';
+    if (h.includes('apodo') || h.includes('nick'))       return 'nickname';
+    if (h.includes('inmersiones'))           return 'divesCount';
     if (h.includes('hace cuanto que no buceas')) return 'lastDive';
-    if (h.includes('intereses especiales')) return 'interests';
-    if (h.includes('palabras clave'))       return 'keywords';
-    if (h.includes('preocupaciones'))       return 'concerns';
+    if (h.includes('intereses especiales'))  return 'interests';
+    if (h.includes('palabras clave'))        return 'keywords';
+    if (h.includes('preocupaciones'))        return 'concerns';
     if (h.includes('necesidades especiales')) return 'needs';
     if (h.includes('preferencia de comunicacion')) return 'commPref';
     if (h.includes('comentarios adicionales'))     return 'comments';
@@ -85,6 +86,9 @@ function parseCSV(csvText) {
       needs:      obj.needs      || '',
       commPref:   obj.commPref   || '',
       comments:   obj.comments   || '',
+      // 💡 No olvides inicializar purchases y points en 0 si no vienen
+      purchases:  [],
+      points:     0,
       registered: new Date().toISOString()
     };
   });
@@ -100,6 +104,7 @@ export default function CrmPage() {
   }, []);
 
   const STORAGE_KEY = center ? `dive_manager_clients_${center}` : null;
+  const currentYear = new Date().getFullYear();
 
   const [clients, setClients] = useState([]);
   const [mode, setMode] = useState('manual');
@@ -113,7 +118,7 @@ export default function CrmPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [yearFilter, setYearFilter] = useState(new Date().getFullYear());
+  const [yearFilter, setYearFilter] = useState(currentYear);
 
   // Persistir sheetUrl en localStorage
   useEffect(() => {
@@ -127,7 +132,11 @@ export default function CrmPage() {
     experience:'', referredBy:'', dob:'', nickname:'',
     divesCount:'', lastDive:'', interests:[],
     keywords:[], concerns:'', needs:'', commPref:'', comments:'',
-    address:'', postal:''
+    address:'', postal:'',
+
+    // Campos nuevos para fidelización y compras
+    purchases: [], // [{ date, product, amount }]
+    points:    0   // puntos acumulados
   };
   const [form, setForm] = useState(initialForm);
 
@@ -135,7 +144,17 @@ export default function CrmPage() {
   useEffect(() => {
     if (!center) return;
     const st = localStorage.getItem(STORAGE_KEY);
-    if (st) setClients(JSON.parse(st));
+    if (st) {
+      const arr = JSON.parse(st);
+      // Asegurarnos de que cada cliente tenga purchases y points
+      const normalized = arr.map(c => ({
+        ...initialForm,
+        ...c,
+        purchases: Array.isArray(c.purchases) ? c.purchases : [],
+        points:    typeof c.points === 'number' ? c.points : 0
+      }));
+      setClients(normalized);
+    }
   }, [center, STORAGE_KEY]);
 
   // Guardar cambios en clientes
@@ -197,6 +216,7 @@ export default function CrmPage() {
 
   // --- Filtrado + Ordenado según el modo ---
   const filtered = useMemo(() => {
+    // Orden por fecha de registro descendente (el cliente más nuevo arriba)
     const base = mode === 'google'
       ? [...clients].reverse()
       : [...clients].sort((a, b) =>
@@ -212,7 +232,7 @@ export default function CrmPage() {
     );
   }, [clients, mode, searchTerm]);
 
-  // Auto-abre detalle si hay un solo resultado
+  // Auto-abre detalle si solo hay un resultado
   useEffect(() => {
     if (filtered.length === 1) {
       setEditing(filtered[0]);
@@ -229,27 +249,50 @@ export default function CrmPage() {
   };
   const handleAdd = e => {
     e.preventDefault();
-    setClients(c => [{ id: Date.now(), ...form, registered: new Date().toISOString() }, ...c]);
+    const nuevo = {
+      ...form,
+      id: Date.now(),
+      registered: new Date().toISOString()
+    };
+    setClients(c => [nuevo, ...c]);
     setForm(initialForm);
     setShowForm(false);
   };
   const handleSave = e => {
     e.preventDefault();
-    setClients(c => c.map(cu => cu.id===editing.id ? { ...editing, ...form } : cu));
+    setClients(c => c.map(cu => (cu.id === editing.id ? { ...editing, ...form } : cu)));
     setEditing(null);
     setForm(initialForm);
     setShowForm(false);
   };
   const handleDeleteAll = () => {
-    if (confirm('Borrar TODOS los clientes?')) setClients([]);
+    if (confirm('¿Borrar TODOS los clientes?')) setClients([]);
   };
   const handleDelete = id => {
-    if (confirm('Borrar este cliente?')) setClients(c => c.filter(cu=>cu.id!==id));
+    if (confirm('¿Borrar este cliente?')) setClients(c => c.filter(cu => cu.id !== id));
   };
 
-// Compras filtradas por año y total
-  const purchasesYear = (form.purchases||[]).filter(p => new Date(p.date).getFullYear() === yearFilter);
-  const totalYear     = purchasesYear.reduce((sum, p) => sum + p.amount, 0);
+  // --- Para mostrar gasto anual y compras por año ---
+  // (El form ya tiene purchases y points, así que solo filtramos según yearFilter)
+  const purchasesYear = (form.purchases || []).filter(
+    p => new Date(p.date).getFullYear() === yearFilter
+  );
+  const totalYear = purchasesYear.reduce((sum, p) => sum + p.amount, 0);
+
+  // Función que, de un cliente, calcula “gastado en el año actual” y “puntos”
+  const computeClientStats = useMemo(() => {
+    const mapStats = {};
+    clients.forEach(c => {
+      // GASTO EN EL AÑO ACTUAL
+      const gasto = (c.purchases || [])
+        .filter(pu => new Date(pu.date).getFullYear() === currentYear)
+        .reduce((s, pu) => s + pu.amount, 0);
+      // PUNTOS (si no existe, 0)
+      const pts = typeof c.points === 'number' ? c.points : 0;
+      mapStats[c.id] = { gasto2025: gasto, points: pts };
+    });
+    return mapStats;
+  }, [clients, currentYear]);
 
   if (center === null) return <p>Cargando CRM...</p>;
 
@@ -269,51 +312,56 @@ export default function CrmPage() {
             list="lst"
             placeholder="Buscar..."
             value={searchTerm}
-            onChange={e=>setSearchTerm(e.target.value)}
+            onChange={e => setSearchTerm(e.target.value)}
             style={styles.input}
           />
           <datalist id="lst">
-            {filtered.map((c,i)=><option key={i} value={c.name}/>)}
+            {filtered.map((c, i) => <option key={i} value={c.name} />)}
           </datalist>
 
-          {['manual','import','google'].map(m=>(
+          {['manual', 'import', 'google'].map(m => (
             <button
               key={m}
-              onClick={()=>{setMode(m); setError(''); setShowForm(false)}}
-              style={mode===m ? styles.activeBtn : styles.tabBtn}
+              onClick={() => { setMode(m); setError(''); setShowForm(false); }}
+              style={mode === m ? styles.activeBtn : styles.tabBtn}
             >
-              {m==='manual'?'+ Manual': m==='import'?'Importar CSV':'Google Sheet'}
+              {m === 'manual' ? '+ Manual'
+                : m === 'import' ? 'Importar CSV'
+                : 'Google Sheet'}
             </button>
           ))}
         </div>
 
-        {mode==='import' && (
+        {mode === 'import' && (
           <input
             type="file"
             accept=".csv"
-            onChange={e=>setFile(e.target.files[0])}
+            onChange={e => setFile(e.target.files[0])}
             style={styles.fileInput}
           />
         )}
-        {mode==='google' && (
-          <div style={{ marginBottom:16 }}>
+        {mode === 'google' && (
+          <div style={{ marginBottom: 16 }}>
             <input
               type="text"
               placeholder="URL Google Sheet"
               value={sheetUrl}
-              onChange={e=>setSheetUrl(e.target.value)}
+              onChange={e => setSheetUrl(e.target.value)}
               style={styles.input}
             />
             {error && <p style={styles.error}>{error}</p>}
           </div>
         )}
 
-        {mode==='manual' && !showForm && (
-          <button style={styles.primaryBtn} onClick={()=>{
-            setForm(initialForm);
-            setEditing(null);
-            setShowForm(true);
-          }}>
+        {mode === 'manual' && !showForm && (
+          <button
+            style={styles.primaryBtn}
+            onClick={() => {
+              setForm(initialForm);
+              setEditing(null);
+              setShowForm(true);
+            }}
+          >
             + Añadir Cliente
           </button>
         )}
@@ -323,25 +371,43 @@ export default function CrmPage() {
           <table style={styles.table}>
             <thead>
               <tr>
-                {['Nombre','Ciudad','Email','Teléfono','D.N.I.','Experiencia','Acciones']
-                  .map(h=> <th key={h} style={styles.th}>{h}</th>)}
-              </tr>  
+                {[
+                  'Nombre',
+                  'Ciudad',
+                  'Email',
+                  'Teléfono',
+                  'D.N.I.',
+                  'Experiencia',
+                  'Puntos',
+                  `Gastado ${currentYear}`,
+                  'Acciones'
+                ].map(h => <th key={h} style={styles.th}>{h}</th>)}
+              </tr>
             </thead>
             <tbody>
-              {filtered.map(c => (
-                <tr key={c.id} style={styles.tr}>
-                  <td style={styles.td}>{c.name}</td>
-                  <td style={styles.td}>{c.city}</td>
-                  <td style={styles.td}>{c.email}</td>
-                  <td style={styles.td}>{c.phone}</td>
-                  <td style={styles.td}>{c.dni}</td>
-                  <td style={styles.td}>{c.experience}</td>
-                  <td style={styles.td}>
-                    <button style={styles.smallBtn} onClick={()=>startEdit(c)}>Editar</button>{' '}
-                    <button style={styles.smallDangerBtn} onClick={()=>handleDelete(c.id)}>Borrar</button>
-                  </td>
-                </tr>
-              ))}
+              {filtered.map(c => {
+                const stats = computeClientStats[c.id] || { gasto2025: 0, points: 0 };
+                const isPremium = stats.gasto2025 >= 1500;
+                return (
+                  <tr key={c.id} style={styles.tr}>
+                    <td style={styles.td}>
+                      {isPremium && '🏅 '}
+                      {c.name}
+                    </td>
+                    <td style={styles.td}>{c.city}</td>
+                    <td style={styles.td}>{c.email}</td>
+                    <td style={styles.td}>{c.phone}</td>
+                    <td style={styles.td}>{c.dni}</td>
+                    <td style={styles.td}>{c.experience}</td>
+                    <td style={styles.td}>{stats.points}</td>
+                    <td style={styles.td}>{stats.gasto2025.toFixed(2)}€</td>
+                    <td style={styles.td}>
+                      <button style={styles.smallBtn} onClick={() => startEdit(c)}>Editar</button>{' '}
+                      <button style={styles.smallDangerBtn} onClick={() => handleDelete(c.id)}>Borrar</button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -349,83 +415,200 @@ export default function CrmPage() {
         {/* Formulario manual / edición */}
         {showForm && (
           <form onSubmit={editing ? handleSave : handleAdd} style={styles.form}>
-            {/* Botón interno “Editar” */}
-            {editing && (
-              <button type="button" style={styles.smallBtn} onClick={()=>startEdit(editing)}>
-                Editar
-              </button>
-            )}
             <div style={styles.formRow}>
               <div style={styles.formCol}>
                 <label style={styles.label}>Nombre completo 📝</label>
-                <input required value={form.name} onChange={e=>setForm({...form,name:e.target.value})} style={styles.input}/>
+                <input
+                  required
+                  value={form.name}
+                  onChange={e => setForm({ ...form, name: e.target.value })}
+                  style={styles.input}
+                />
                 <label style={styles.label}>Población 🌎</label>
-                <input value={form.city} onChange={e=>setForm({...form,city:e.target.value})} style={styles.input}/>
+                <input
+                  value={form.city}
+                  onChange={e => setForm({ ...form, city: e.target.value })}
+                  style={styles.input}
+                />
                 <label style={styles.label}>Correo electrónico 📧</label>
-                <input type="email" required value={form.email} onChange={e=>setForm({...form,email:e.target.value})} style={styles.input}/>
+                <input
+                  type="email"
+                  required
+                  value={form.email}
+                  onChange={e => setForm({ ...form, email: e.target.value })}
+                  style={styles.input}
+                />
                 <label style={styles.label}>Teléfono de contacto 📱</label>
-                <input type="tel" required value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})} style={styles.input}/>
+                <input
+                  type="tel"
+                  required
+                  value={form.phone}
+                  onChange={e => setForm({ ...form, phone: e.target.value })}
+                  style={styles.input}
+                />
                 <label style={styles.label}>D.N.I. 📄</label>
-                <input value={form.dni} onChange={e=>setForm({...form,dni:e.target.value})} style={styles.input}/>
+                <input
+                  value={form.dni}
+                  onChange={e => setForm({ ...form, dni: e.target.value })}
+                  style={styles.input}
+                />
                 <label style={styles.label}>Dirección completa</label>
-                <input value={form.address} onChange={e=>setForm({...form,address:e.target.value})} style={styles.input}/>
+                <input
+                  value={form.address}
+                  onChange={e => setForm({ ...form, address: e.target.value })}
+                  style={styles.input}
+                />
                 <label style={styles.label}>Código postal</label>
-                <input value={form.postal} onChange={e=>setForm({...form,postal:e.target.value})} style={styles.input}/>
+                <input
+                  value={form.postal}
+                  onChange={e => setForm({ ...form, postal: e.target.value })}
+                  style={styles.input}
+                />
               </div>
-              
+
               <div style={styles.formCol}>
                 <label style={styles.label}>Nivel de experiencia</label>
-                <input value={form.experience} onChange={e=>setForm({...form,experience:e.target.value})} style={styles.input}/>
+                <input
+                  value={form.experience}
+                  onChange={e => setForm({ ...form, experience: e.target.value })}
+                  style={styles.input}
+                />
                 <label style={styles.label}>¿Cómo nos has conocido? 🤗</label>
-                <input value={form.referredBy} onChange={e=>setForm({...form,referredBy:e.target.value})} style={styles.input}/>
+                <input
+                  value={form.referredBy}
+                  onChange={e => setForm({ ...form, referredBy: e.target.value })}
+                  style={styles.input}
+                />
                 <label style={styles.label}>Fecha de nacimiento 🔍</label>
-                <input type="date" value={form.dob} onChange={e=>setForm({...form,dob:e.target.value})} style={styles.input}/>
+                <input
+                  type="date"
+                  value={form.dob}
+                  onChange={e => setForm({ ...form, dob: e.target.value })}
+                  style={styles.input}
+                />
                 <label style={styles.label}>Apodo/Nick 🔥</label>
-                <input value={form.nickname} onChange={e=>setForm({...form,nickname:e.target.value})} style={styles.input}/>
+                <input
+                  value={form.nickname}
+                  onChange={e => setForm({ ...form, nickname: e.target.value })}
+                  style={styles.input}
+                />
                 <label style={styles.label}>Nº de inmersiones realizadas</label>
-                <input type="number" value={form.divesCount} onChange={e=>setForm({...form,divesCount:e.target.value})} style={styles.input}/>
+                <input
+                  type="number"
+                  value={form.divesCount}
+                  onChange={e => setForm({ ...form, divesCount: e.target.value })}
+                  style={styles.input}
+                />
                 <label style={styles.label}>¿Hace cuánto que no buceas? 🔔</label>
-                <input placeholder="p.ej. 3 meses" value={form.lastDive} onChange={e=>setForm({...form,lastDive:e.target.value})} style={styles.input}/>
+                <input
+                  placeholder="p.ej. 3 meses"
+                  value={form.lastDive}
+                  onChange={e => setForm({ ...form, lastDive: e.target.value })}
+                  style={styles.input}
+                />
               </div>
+
               <div style={styles.formCol}>
                 <label style={styles.label}>Intereses especiales</label>
-                <select multiple value={form.interests} onChange={e=>setForm({...form,interests:[...e.target.selectedOptions].map(o=>o.value)})} style={styles.selectMulti}>
+                <select
+                  multiple
+                  value={form.interests}
+                  onChange={e => setForm({
+                    ...form,
+                    interests: [...e.target.selectedOptions].map(o => o.value)
+                  })}
+                  style={styles.selectMulti}
+                >
                   <option>Fotografía submarina</option>
                   <option>Cueva</option>
                   <option>Mantarrayas</option>
                   <option>Arrecifes</option>
                 </select>
+
                 <label style={styles.label}>Palabras clave</label>
-                <select multiple value={form.keywords} onChange={e=>setForm({...form,keywords:[...e.target.selectedOptions].map(o=>o.value)})} style={styles.selectMulti}>
+                <select
+                  multiple
+                  value={form.keywords}
+                  onChange={e => setForm({
+                    ...form,
+                    keywords: [...e.target.selectedOptions].map(o => o.value)
+                  })}
+                  style={styles.selectMulti}
+                >
                   <option>Aventura</option>
                   <option>Relajación</option>
                   <option>Aprendizaje</option>
                 </select>
+
                 <label style={styles.label}>Preocupaciones 👋</label>
-                <textarea value={form.concerns} onChange={e=>setForm({...form,concerns:e.target.value})} style={styles.textarea}/>
+                <textarea
+                  value={form.concerns}
+                  onChange={e => setForm({ ...form, concerns: e.target.value })}
+                  style={styles.textarea}
+                />
+
                 <label style={styles.label}>Necesidades especiales 🍹</label>
-                <textarea value={form.needs} onChange={e=>setForm({...form,needs:e.target.value})} style={styles.textarea}/>
+                <textarea
+                  value={form.needs}
+                  onChange={e => setForm({ ...form, needs: e.target.value })}
+                  style={styles.textarea}
+                />
+
                 <label style={styles.label}>Preferencia de comunicación</label>
-                <input value={form.commPref} onChange={e=>setForm({...form,commPref:e.target.value})} style={styles.input}/>
+                <input
+                  value={form.commPref}
+                  onChange={e => setForm({ ...form, commPref: e.target.value })}
+                  style={styles.input}
+                />
+
                 <label style={styles.label}>Comentarios adicionales 💡</label>
-                <textarea value={form.comments} onChange={e=>setForm({...form,comments:e.target.value})} style={styles.textarea}/>
+                <textarea
+                  value={form.comments}
+                  onChange={e => setForm({ ...form, comments: e.target.value })}
+                  style={styles.textarea}
+                />
               </div>
             </div>
-           {/* — NUEVO — sección de Compras filtradas por año */}
-           <div style={{ marginTop: 24 }}>
+
+            {/* — NUEVO — sección de Compras filtradas por año */}
+            <div style={{ marginTop: 24 }}>
               <h3>
                 Compras de {yearFilter}{' '}
-                <button type="button" onClick={() => setYearFilter(y => y - 1)}>&lt;</button>{' '}
-                <button type="button" onClick={() => setYearFilter(y => Math.min(y + 1, new Date().getFullYear()))}>&gt;</button>
+                <button
+                  type="button"
+                  onClick={() => setYearFilter(y => Math.max(y - 1, 2000))}
+                  style={styles.smallBtn}
+                >
+                  &lt;
+                </button>{' '}
+                <button
+                  type="button"
+                  onClick={() => setYearFilter(y => Math.min(y + 1, currentYear))}
+                  style={styles.smallBtn}
+                >
+                  &gt;
+                </button>
               </h3>
               <ul>
-                {purchasesYear.map((p,i)=>(
+                {purchasesYear.map((p, i) => (
                   <li key={i}>
-                    {p.date.slice(0,10)} – {p.product}: {p.amount.toFixed(2)}€
+                    {p.date.slice(0, 10)} – {p.product}: {p.amount.toFixed(2)}€
                   </li>
                 ))}
               </ul>
-              <p><strong>Total en {yearFilter}:</strong> {totalYear.toFixed(2)}€</p>
+              <p>
+                <strong>Total en {yearFilter}:</strong> {totalYear.toFixed(2)}€
+              </p>
+            </div>
+
+            {/* — NUEVO — mostrar puntos actuales */}
+            <div style={{ marginTop: 24 }}>
+              <h3>Puntos acumulados: {form.points || 0}</h3>
+              {form.points >= 100 && (
+                <p style={{ color: '#0070f3', fontWeight: 600 }}>
+                  🎉 ¡Este cliente puede canjear 100 puntos por 10% de descuento!
+                </p>
+              )}
             </div>
 
             <div style={styles.formActions}>
@@ -435,9 +618,9 @@ export default function CrmPage() {
               <button
                 type="button"
                 onClick={() => {
-                  setShowForm(false)
-                  setEditing(null)
-                  setForm(initialForm)
+                  setShowForm(false);
+                  setEditing(null);
+                  setForm(initialForm);
                 }}
                 style={styles.smallDangerBtn}
               >
@@ -450,6 +633,7 @@ export default function CrmPage() {
     </div>
   )
 }
+
 const styles = {
   page: { backgroundColor:'#afcdaa', minHeight:'100vh' }, // <-- COLOR ARREGLADO
   header: {
@@ -508,7 +692,7 @@ const styles = {
     background:'#dc3545', color:'#fff', border:'none',
     padding:'4px 8px', borderRadius:4, cursor:'pointer',
     fontSize:12
-  },  
+  },
   fileInput: { marginBottom:16 },
   error: { color:'red', marginTop:4 },
   tableWrapper: {
