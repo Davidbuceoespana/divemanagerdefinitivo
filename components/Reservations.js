@@ -26,16 +26,16 @@ function getStateIcon(status) {
 function getDaysOfWeek(startDate) {
   const days = [];
   const start = new Date(startDate);
-  for (let i = 0; i < 7; i++) {
+  for(let i = 0; i < 7; i++){
     const d = new Date(start);
     d.setDate(start.getDate() + i);
-    days.push(d.toISOString().slice(0, 10));
+    days.push(d.toISOString().slice(0,10));
   }
   return days;
 }
 
 export default function Reservations() {
-  // ─── 1) Definición de hooks (¡todos al inicio!) ───────────────────────────────
+  // 1) Todos los hooks al principio, sin retornos tempranos
   const [center, setCenter]         = useState(undefined);
   const [mounted, setMounted]       = useState(false);
 
@@ -50,9 +50,14 @@ export default function Reservations() {
   const [showCalendar, setShowCalendar]   = useState(false);
   const [csvData, setCsvData]             = useState('');
 
-  // Frase aleatoria y todayStr los setearemos en un useEffect para evitar mismatch
-  const [fraseRandom, setFraseRandom] = useState('');
-  const [todayStr, setTodayStr]       = useState('');
+  const frases = [
+    "Aquí las reservas no se pierden, ¡se convierten en buceos épicos!",
+    "Si alguien cancela, que te invite a una caña 🍻",
+    "Más reservas, más locuras bajo el agua 🌊",
+    "Hoy es día de pleno… ¡A llenar el centro de buzos!"
+  ];
+  const fraseRandom = frases[Math.floor(Math.random() * frases.length)];
+  const todayStr = new Date().toISOString().slice(0, 10);
 
   const [form, setForm] = useState({
     id: null,
@@ -71,63 +76,41 @@ export default function Reservations() {
     note: ''
   });
 
-  const [weekStart, setWeekStart] = useState('');
+  const [weekStart, setWeekStart] = useState(todayStr);
 
-  // ─── 2) useEffect: Montar, leer 'active_center' y asignar 'mounted' ─────────
+  // 2) useEffect para montar y leer "active_center"
   useEffect(() => {
     setMounted(true);
-    // Solo en cliente
     if (typeof window !== "undefined") {
-      const c = localStorage.getItem('active_center') || "";
-      setCenter(c);
+      setCenter(localStorage.getItem('active_center') || "");
     }
-    // Establecemos la 'fecha de hoy' en cliente
-    const ahora = new Date().toISOString().slice(0, 10);
-    setTodayStr(ahora);
-    setWeekStart(ahora);
-
-    // Generar la frase aleatoria solo en cliente
-    const frases = [
-      "Aquí las reservas no se pierden, ¡se convierten en buceos épicos!",
-      "Si alguien cancela, que te invite a una caña 🍻",
-      "Más reservas, más locuras bajo el agua 🌊",
-      "Hoy es día de pleno… ¡A llenar el centro de buzos!"
-    ];
-    const idx = Math.floor(Math.random() * frases.length);
-    setFraseRandom(frases[idx]);
   }, []);
 
-  // ─── 3) Claves dinámicas según centro  ────────────────────────────────────────
+  // Claves dinámicas según centro
   const DYN_RES_KEY     = center ? `${STORAGE_KEY_RES}_${center}` : null;
   const DYN_CLIENTS_KEY = center ? `${STORAGE_KEY_CLIENTS}_${center}` : null;
 
-  // ─── 4) Carga inicial de 'reservations' y 'clientOptions' cuando cambia 'center'
+  // 3) Carga inicial de reservations y clientes cuando center cambia
   useEffect(() => {
     if (!center) return;
-    // Cargar reservas
     const st = localStorage.getItem(DYN_RES_KEY);
-    if (st) {
-      try {
-        setReservations(JSON.parse(st));
-      } catch { /* si no es JSON válido, ignoro */ }
-    }
-    // Cargar clientes
+    if (st) setReservations(JSON.parse(st));
     const c = localStorage.getItem(DYN_CLIENTS_KEY);
     if (c) {
       try {
         const arr = JSON.parse(c);
         setClientOptions(arr.map(x => x.name).filter(Boolean));
-      } catch { }
+      } catch {}
     }
-  }, [center, DYN_RES_KEY, DYN_CLIENTS_KEY]);
+  }, [center]);
 
-  // ─── 5) Persistencia: guardar 'reservations' cuando cambian  ───────────────────
+  // 4) Persistencia cada vez que cambian reservations
   useEffect(() => {
     if (!center) return;
     localStorage.setItem(DYN_RES_KEY, JSON.stringify(reservations));
-  }, [reservations, center, DYN_RES_KEY]);
+  }, [reservations, center]);
 
-  // ─── 6) Métricas y estadísticas ────────────────────────────────────────────────
+  // 5) Métricas y estadísticas
   const total     = reservations.length;
   const upcoming  = useMemo(
     () => reservations.filter(r => r.date >= todayStr).length,
@@ -155,15 +138,12 @@ export default function Reservations() {
     return Object.entries(count).sort((a, b) => b[1] - a[1]);
   }, [reservations]);
 
-  // ─── 7) Helpers pagos y calcular restante ─────────────────────────────────────
+  // 6) Helpers: pagos y restante
   const addPayment = () => {
     if (!form.payAmount) return;
     setForm(f => ({
       ...f,
-      payments: [
-        ...f.payments,
-        { date: f.payDate, method: f.payMethod, amount: f.payAmount }
-      ],
+      payments: [...f.payments, { date: f.payDate, method: f.payMethod, amount: f.payAmount }],
       payAmount: ''
     }));
   };
@@ -180,7 +160,7 @@ export default function Reservations() {
     return (tot - dep - paid).toFixed(2);
   };
 
-  // ─── 8) Modal: crear o editar reserva ──────────────────────────────────────────
+  // 7) Modal: nuevo y editar
   const openNew = () => {
     setEditItem(null);
     setTab('details');
@@ -220,7 +200,7 @@ export default function Reservations() {
     setShowForm(true);
   };
 
-  // ─── 9) Guardar o borrar reserva ───────────────────────────────────────────────
+  // 8) Guardar y borrar
   const handleSubmit = e => {
     e.preventDefault();
     const payload = {
@@ -244,7 +224,7 @@ export default function Reservations() {
     setReservations(rs => rs.filter(r => r.id !== id));
   };
 
-  // ─── 10) Acciones rápidas: WhatsApp, correo, llamada, cambiar estado ─────────
+  // 9) Acciones rápidas
   const sendWhatsApp = name => {
     if (!name) return;
     window.open(
@@ -266,7 +246,7 @@ export default function Reservations() {
     );
   };
 
-  // ─── 11) Filtros y búsqueda ───────────────────────────────────────────────────
+  // 10) Filtros y búsqueda
   const filtered = reservations.filter(r => {
     if (statusFilter !== 'all' && r.status !== statusFilter) return false;
     if (dateFilter && r.date !== dateFilter) return false;
@@ -279,7 +259,7 @@ export default function Reservations() {
     );
   });
 
-  // ─── 12) Exportar a CSV ────────────────────────────────────────────────────────
+  // 11) Exportar a CSV
   const exportCSV = () => {
     const fields = ['Cliente', 'Actividad', 'Fecha', 'Estado', 'Total', 'Restante', 'Nota'];
     const rows = filtered.map(r => [
@@ -306,15 +286,15 @@ export default function Reservations() {
     }, 150);
   };
 
-  // ─── 13) Calendario semanal ───────────────────────────────────────────────────
+  // 12) Vista calendario semanal
   const weekDays = getDaysOfWeek(weekStart);
   const weekReservations = reservations.filter(r => weekDays.includes(r.date));
 
-  // ─── 14) Returns tempranos (¡después de declarar todos los hooks!)  ───────────
+  // 13) Retornos tempranos *después* de declarar *todos* los hooks
   if (!mounted) return <p>Cargando datos del centro...</p>;
   if (!center) return <p>Debes seleccionar un centro activo.</p>;
 
-  // ─── 15) Renderizado final ────────────────────────────────────────────────────
+  // 14) RENDER
   return (
     <div style={{ padding: 20, fontFamily: 'sans-serif', position: 'relative' }}>
       <h2 style={{ textAlign: 'center', marginBottom: 6 }}>
@@ -891,7 +871,7 @@ export default function Reservations() {
   );
 }
 
-// ─── Componente BoxResumen ─────────────────────────────────────────────────────
+// Componente BoxResumen
 function BoxResumen({ color, label, value, icon }) {
   return (
     <div
@@ -915,7 +895,7 @@ function BoxResumen({ color, label, value, icon }) {
   );
 }
 
-// ─── Estilos en línea ──────────────────────────────────────────────────────────
+// Estilos en línea
 const th = {
   border: '1px solid #ccc',
   padding: 8,
