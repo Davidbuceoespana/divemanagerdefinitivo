@@ -25,19 +25,20 @@ function getStateIcon(status) {
 }
 
 export default function Reservations() {
-  // "Hydratation lock" para evitar errores SSR/localStorage
+  const [center, setCenter] = useState(null);
   const [isClient, setIsClient] = useState(false);
-  const [center, setCenter] = useState("");
 
   useEffect(() => {
     setIsClient(true);
     if (typeof window !== "undefined") {
-      setCenter(localStorage.getItem('active_center') || "");
+      const c = localStorage.getItem('active_center');
+      setCenter(c || "");
     }
   }, []);
 
   // No renderizar nada hasta saber que estamos en cliente y tenemos el centro
   if (!isClient) return null;
+  if (center === null) return <p>Cargando CRM...</p>;
   if (!center) return <p>Debes seleccionar un centro activo.</p>;
 
   // Claves dinámicas según el centro
