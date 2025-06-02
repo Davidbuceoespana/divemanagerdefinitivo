@@ -197,60 +197,76 @@ export default function Caja() {
   const handleDiscountChange = (id, discount) =>
     setCart(c => c.map(x => x.id === id ? { ...x, discountPct: discount } : x));
   const handleClear          = ()         => setCart([]);
+// — 11) Cobrar → ticket + exportar compras al CRM + actualizar puntos ——
+const handleCharge = () => {
+  if (!selectedCashier) {
+    alert('Debes seleccionar un cajero antes de cobrar.');
+    return;
+  }
+  if (!paymentMethod) {
+    alert('Debes seleccionar una forma de pago antes de cobrar.');
+    return;
+  }
+     // 1) El “total” ya incluye el descuento de puntos (si se canjearon)
+  const ticketTotal = total;
 
-  // —— 11) Cobrar → ticket + exportar compras al CRM + actualizar puntos ——
-  const handleCharge = () => {
-    if (!selectedCashier) { alert('Debes seleccionar un cajero antes de cobrar.'); return; }
-    if (!paymentMethod) { alert('Debes seleccionar una forma de pago antes de cobrar.'); return; }
-    const now = new Date();
-    // El total ya incluye el descuento de puntos si se canjearon
-    const ticketTotal = total;
-    const ticket = {
-      id: Date.now(),
-      date: now.toISOString(),
-      cashier: selectedCashier,
-      client: selectedClient,
-      paymentMethod,
-      items: cart,
-      total: ticketTotal
-    };
-    setTickets(t => [...t, ticket]);
+  // 2) Ahora sí calculamos los puntos ganados (5% del total)
+  const earnedPoints = Math.floor(ticketTotal * 0.20);
 
-    // Actualizar cliente: compras + puntos
-    const rawClients = JSON.parse(localStorage.getItem(`dive_manager_clients_${center}`) || '[]');
-    const updatedClients = rawClients.map(c => {
-      if (c.name === selectedClient) {
-        const prevPurchases = Array.isArray(c.purchases) ? c.purchases : [];
-        // Guardamos cada línea
-        const linePurchases = cart.map(item => ({
-          date: now.toISOString(),
-          product: item.name,
-          amount: ((item.customPrice * item.qty) * (1 - (item.discountPct || 0)/100))
-        }));
-        // Puntos: 5% del total del ticket
-        const earnedPoints = Math.floor(ticketTotal * 0.05);
-        const prevPoints = c.points || 0;
-        const newPoints = prevPoints - (redeemedPoints ? 100 : 0) + earnedPoints;
-        return {
-          ...c,
-          purchases: [...prevPurchases, ...linePurchases],
-          points: newPoints
-        };
-      }
-      return c;
-    });
-    localStorage.setItem(`dive_manager_clients_${center}`, JSON.stringify(updatedClients));
+  // 3) Obtenemos la lista cruda de clientes y la actualizamos:
+  const rawClients = JSON.parse(
+    localStorage.getItem(`dive_manager_clients_${center}`) || '[]'
+  );
 
-    alert(`Cobrado ${ticketTotal.toFixed(2)}${currency}`);
-    handleClear();
-    setRedeemedPoints(false);
-    // Refrescar puntos e historial para el cliente en UI
-    const updated = updatedClients.find(c => c.name === selectedClient);
-    if (updated) {
-      setClientPoints(updated.points);
-      setClientPurchases(updated.purchases);
+  // 4) Si el cliente canjeó puntos, restamos 100; luego sumamos lo ganado:
+  const updatedClients = rawClients.map(c => {
+    if (c.name === selectedClient) {
+      const prevPoints = c.points || 0;
+      const newPoints = prevPoints - (redeemedPoints ? 100 : 0) + earnedPoints;
+      // Actualizamos sus compras (añadimos cada línea del carrito)
+      const prevPurchases = Array.isArray(c.purchases) ? c.purchases : [];
+      const now = new Date().toISOString();
+      const linePurchases = cart.map(item => ({
+        date: now,
+        product: item.name,
+        amount:
+          (item.customPrice * item.qty) *
+          (1 - (item.discountPct || 0) / 100),
+      }));
+      return {
+        ...c,
+        points: newPoints,
+        purchases: [...prevPurchases, ...linePurchases],
+      };
     }
+    return c;
+  });
+
+  // 5) Guardamos la lista actualizada de clientes en localStorage
+  localStorage.setItem(
+    `dive_manager_clients_${center}`,
+    JSON.stringify(updatedClients)
+  );
+
+  // 6) Generamos el objeto “ticket” y lo guardamos en estado:
+  const now = new Date().toISOString();
+  const ticket = {
+    id: Date.now(),
+    date: now,
+    cashier: selectedCashier,
+    client: selectedClient,
+    paymentMethod,
+    items: cart,
+    total: ticketTotal,
   };
+  setTickets((t) => [...t, ticket]);
+
+  alert(`Cobrado ${ticketTotal.toFixed(2)}${currency}`);
+
+  // 7) Limpiamos el carrito y reseteamos canjeo de puntos:
+  setCart([]);
+  setRedeemedPoints(false);
+};
 
   // —— 12) Cerrar caja ——
   const handleCloseBox = () => {
