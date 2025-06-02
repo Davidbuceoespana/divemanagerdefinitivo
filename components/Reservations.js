@@ -39,8 +39,8 @@ export default function Reservations() {
 
    // Protege el render hasta tener contexto de cliente
   if (!mounted) return <p>Cargando datos del centro...</p>;
-  if (center === null) return <p>Cargando CRM...</p>;
-  if (!center) return <p>Debes seleccionar un centro activo.</p>;
+if (center === null) return <p>Cargando CRM...</p>;
+if (!center) return <p>Debes seleccionar un centro activo.</p>;
 
     // Claves dinámicas según el centro
   const DYN_RES_KEY     = `${STORAGE_KEY_RES}_${center}`;
