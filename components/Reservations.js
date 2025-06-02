@@ -25,22 +25,20 @@ function getStateIcon(status) {
 }
 
 export default function Reservations() {
+  // Solo renderizar tras montar en cliente
+  const [mounted, setMounted] = useState(false);
   const [center, setCenter] = useState(null);
-  const [isClient, setIsClient] = useState(false);
 
   useEffect(() => {
-    setIsClient(true);
-    if (typeof window !== "undefined") {
-      const c = localStorage.getItem('active_center');
-      setCenter(c || "");
-    }
+    setMounted(true); // Ya estamos en cliente
+    const c = typeof window !== "undefined" ? localStorage.getItem('active_center') : null;
+    setCenter(c);
   }, []);
 
-  // No renderizar nada hasta saber que estamos en cliente y tenemos el centro
-  if (!isClient) return null;
+  // NUNCA renderices nada hasta que esté montado el cliente
+  if (!mounted) return null;
   if (center === null) return <p>Cargando CRM...</p>;
   if (!center) return <p>Debes seleccionar un centro activo.</p>;
-
   // Claves dinámicas según el centro
   const DYN_RES_KEY     = `${STORAGE_KEY_RES}_${center}`;
   const DYN_CLIENTS_KEY = `${STORAGE_KEY_CLIENTS}_${center}`;
