@@ -25,20 +25,22 @@ function getStateIcon(status) {
 }
 
 export default function Reservations() {
-  // Solo renderizar tras montar en cliente
+  // Estado seguro para Next.js
   const [mounted, setMounted] = useState(false);
   const [center, setCenter] = useState(null);
 
   useEffect(() => {
-    setMounted(true); // Ya estamos en cliente
-    const c = typeof window !== "undefined" ? localStorage.getItem('active_center') : null;
-    setCenter(c);
+    setMounted(true);
+    if (typeof window !== "undefined") {
+      const c = localStorage.getItem('active_center');
+      setCenter(c || "");
+    }
   }, []);
 
-  // NUNCA renderices nada hasta que esté montado el cliente
   if (!mounted) return null;
   if (center === null) return <p>Cargando CRM...</p>;
   if (!center) return <p>Debes seleccionar un centro activo.</p>;
+ 
   // Claves dinámicas según el centro
   const DYN_RES_KEY     = `${STORAGE_KEY_RES}_${center}`;
   const DYN_CLIENTS_KEY = `${STORAGE_KEY_CLIENTS}_${center}`;
