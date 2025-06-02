@@ -5,7 +5,6 @@ const STORAGE_KEY_RES     = 'dive_manager_reservations';
 const STORAGE_KEY_CLIENTS = 'dive_manager_clients';
 const STATUS = ['Confirmada', 'Pendiente', 'Cancelada'];
 const METHODS = ['Enlace de pago','Efectivo','Clip','Transferencia','Bizum'];
-const CENTROS = ['ESPAÑA', 'MÉXICO']; // Puedes añadir los que quieras
 
 function formatDate(d) {
   if (!d) return '';
@@ -26,25 +25,28 @@ function getStateIcon(status) {
 }
 
 export default function Reservations() {
-  const [center, setCenter] = useState(null);
+  // Paso 1: Solo accedemos a localStorage en el cliente
+  const [center, setCenter] = useState(undefined);
   const [mounted, setMounted] = useState(false);
- // Solo accedemos a localStorage en cliente
+
+  // Paso 2: Cargamos el centro activo solo en cliente
   useEffect(() => {
     setMounted(true);
     if (typeof window !== "undefined") {
-      setCenter(localStorage.getItem('active_center'));
+      setCenter(localStorage.getItem('active_center') || "");
     }
   }, []);
 
-   // Mientras no esté montado o no haya centro, muestra carga o mensaje
+  // Mientras no hemos montado, no hacemos nada
   if (!mounted) return <p>Cargando datos del centro...</p>;
-  if (center === null) return <p>Cargando datos del centro...</p>;
+  // Si no hay centro, pedimos seleccionar
   if (!center) return <p>Debes seleccionar un centro activo.</p>;
-    // Claves dinámicas según el centro
+
+  // Paso 3: Todas las claves dinámicas por centro
   const DYN_RES_KEY     = `${STORAGE_KEY_RES}_${center}`;
   const DYN_CLIENTS_KEY = `${STORAGE_KEY_CLIENTS}_${center}`;
 
-  // Estado principal
+  // Paso 4: Estados principales
   const [reservations, setReservations]   = useState([]);
   const [clientOptions, setClientOptions] = useState([]);
   const [showForm, setShowForm]           = useState(false);
@@ -62,7 +64,6 @@ export default function Reservations() {
     "Hoy es día de pleno… ¡A llenar el centro de buzos!"
   ];
   const fraseRandom = frases[Math.floor(Math.random()*frases.length)];
-
   const todayStr = new Date().toISOString().slice(0,10);
   const [form, setForm] = useState({
     id: null,
@@ -81,7 +82,7 @@ export default function Reservations() {
     note: ''
   });
 
-  // Carga inicial y persistencia
+  // Paso 5: Carga y persistencia de datos del centro seleccionado
   useEffect(() => {
     if (!center) return;
     const st = localStorage.getItem(DYN_RES_KEY);
@@ -94,6 +95,7 @@ export default function Reservations() {
       } catch{}
     }
   }, [center]);
+
   useEffect(() => {
     if (!center) return;
     localStorage.setItem(DYN_RES_KEY, JSON.stringify(reservations));
@@ -114,7 +116,7 @@ export default function Reservations() {
     });
     return Object.entries(count).sort((a,b)=>b[1]-a[1]);
   },[reservations]);
-  // Ranking clientes (opcional)
+  // Ranking clientes
   const clientRanking = useMemo(()=>{
     const count = {};
     reservations.forEach(r => { 
@@ -217,7 +219,6 @@ export default function Reservations() {
     window.open(`mailto:?subject=Reserva Buceo España&body=Hola ${name},%0ATu reserva está registrada.%0A¡Nos vemos bajo el agua!`, '_blank');
   };
   const callClient = () => alert('Pon el teléfono del cliente en el CRM para poder llamar directamente 😜');
-  // Estado rápido
   const quickStatus = (id, newStatus) => {
     setReservations(rs => rs.map(r => r.id===id ? { ...r, status:newStatus } : r));
   };
