@@ -1,8 +1,10 @@
 // pages/crm.js
-import React, { useState, useEffect, useMemo } from 'react'
-import Link from 'next/link'
+import React, { useState, useEffect, useMemo } from 'react';
+import Link from 'next/link';
 
-// Reemplaza solamente la función parseCSV que tenías; todo lo demás está intacto.
+//
+// Reemplaza solamente la función parseCSV; todo lo demás está intacto.
+//
 function parseCSV(csvText) {
   // 1) Partimos líneas
   const lines = csvText.trim().split(/\r?\n/);
@@ -11,8 +13,8 @@ function parseCSV(csvText) {
   // 2) Detectar delimitador: si hay más ';' que ',', usamos ';'
   const headerLine = lines[0];
   const commaCount = (headerLine.match(/,/g) || []).length;
-  const semiCount  = (headerLine.match(/;/g) || []).length;
-  const delimiter  = semiCount > commaCount ? ';' : ',';
+  const semiCount = (headerLine.match(/;/g) || []).length;
+  const delimiter = semiCount > commaCount ? ';' : ',';
 
   // 3) Cabeceras crudas y normalizadas
   const rawHeaders = headerLine.split(delimiter).map(h => h.trim());
@@ -23,7 +25,7 @@ function parseCSV(csvText) {
       .replace(/[^a-zA-Z0-9 ]/g, '')      // quita emojis y signos
       .toLowerCase()
   );
-  
+
   console.log('CSV Headers:', rawHeaders);
   console.log('Normalized:', normalized, 'Delimiter:', JSON.stringify(delimiter));
 
@@ -86,7 +88,7 @@ function parseCSV(csvText) {
       needs:      obj.needs      || '',
       commPref:   obj.commPref   || '',
       comments:   obj.comments   || '',
-      // 💡 No olvides inicializar purchases y points en 0 si no vienen
+      // 💡 Inicializamos purchases y points en 0 si no vienen
       purchases:  [],
       points:     0,
       registered: new Date().toISOString()
@@ -119,6 +121,8 @@ export default function CrmPage() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [yearFilter, setYearFilter] = useState(currentYear);
+  const [experienceFilter, setExperienceFilter] = useState('');
+  const [emailList, setEmailList] = useState('');
 
   // Persistir sheetUrl en localStorage
   useEffect(() => {
@@ -128,15 +132,13 @@ export default function CrmPage() {
   }, [sheetUrl]);
 
   const initialForm = {
-    name:'', city:'', email:'', phone:'', dni:'',
-    experience:'', referredBy:'', dob:'', nickname:'',
-    divesCount:'', lastDive:'', interests:[],
-    keywords:[], concerns:'', needs:'', commPref:'', comments:'',
-    address:'', postal:'',
-
-    // Campos nuevos para fidelización y compras
-    purchases: [], // [{ date, product, amount }]
-    points:    0   // puntos acumulados
+    name:       '', city:       '', email:      '', phone:      '', dni:        '',
+    experience: '', referredBy: '', dob:        '', nickname:   '',
+    divesCount: '', lastDive:   '', interests:  [], keywords:   [], concerns:   '',
+    needs:      '', commPref:   '', comments:   '', address:    '', postal:    '',
+    // Campos para fidelización y compras
+    purchases:  [], // [{ date, product, amount }]
+    points:     0   // puntos acumulados
   };
   const [form, setForm] = useState(initialForm);
 
@@ -214,23 +216,35 @@ export default function CrmPage() {
       .catch(err => setError(`No se pudo cargar Google Sheet: ${err.message}`));
   }
 
-  // --- Filtrado + Ordenado según el modo ---
+  // Filtrado + Ordenado según el modo
   const filtered = useMemo(() => {
-    // Orden por fecha de registro descendente (el cliente más nuevo arriba)
-    const base = mode === 'google'
+    // 1) Primeramente ordenamos (por fecha de registro descendente si no es “google”)
+    let base = mode === 'google'
       ? [...clients].reverse()
       : [...clients].sort((a, b) =>
           new Date(b.registered) - new Date(a.registered)
         );
+
+    // 2) Filtrar por experiencia si se ha seleccionado algo
+    if (experienceFilter) {
+      base = base.filter(c =>
+        c.experience.toLowerCase().includes(experienceFilter.toLowerCase())
+      );
+    }
+
+    // 3) Si no hay término de búsqueda, devolvemos todo
     if (!searchTerm) return base;
-    const t = searchTerm.toLowerCase();
-    return base.filter(c =>
-      c.name.toLowerCase().includes(t) ||
-      c.email.toLowerCase().includes(t) ||
-      c.phone.toLowerCase().includes(t) ||
-      c.city.toLowerCase().includes(t)
-    );
-  }, [clients, mode, searchTerm]);
+
+    // 4) Si hay texto en el input de búsqueda, filtramos por nombre, email, teléfono o ciudad
+    const t = searchTerm.toLowerCase().trim();
+    return base.filter(c => {
+      const nameMatch  = c.name.toLowerCase().includes(t);
+      const emailMatch = c.email?.toLowerCase().includes(t);
+      const phoneMatch = String(c.phone || '').toLowerCase().includes(t);
+      const cityMatch  = c.city?.toLowerCase().includes(t);
+      return nameMatch || emailMatch || phoneMatch || cityMatch;
+    });
+  }, [clients, mode, searchTerm, experienceFilter]);
 
   // Auto-abre detalle si solo hay un resultado
   useEffect(() => {
@@ -272,27 +286,54 @@ export default function CrmPage() {
     if (confirm('¿Borrar este cliente?')) setClients(c => c.filter(cu => cu.id !== id));
   };
 
-  // --- Para mostrar gasto anual y compras por año ---
-  // (El form ya tiene purchases y points, así que solo filtramos según yearFilter)
+  // Generar CSV y descargar (botón “Exportar Excel”)
+  const exportToCSV = () => {
+    const headers = ['Nombre','Ciudad','Email','Teléfono','DNI','Experiencia','Fecha Nac.','Puntos','Gastado Año'];
+    const rows = filtered.map(c => {
+      // Calcular gasto de año actual
+      const gasto = (c.purchases || [])
+        .filter(pu => new Date(pu.date).getFullYear() === currentYear)
+        .reduce((s, pu) => s + pu.amount, 0);
+      return [
+        c.name,
+        c.city,
+        c.email,
+        c.phone,
+        c.dni,
+        c.experience,
+        c.dob,
+        c.points || 0,
+        gasto.toFixed(2)
+      ].join(',');
+    });
+    const csvContent = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'clientes.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Recopilar correos por nivel de experiencia
+  const generateEmailList = () => {
+    const list = filtered
+      .map(c => c.email)
+      .filter(em => em)
+      .join('; ');
+    setEmailList(list);
+  };
+
+  // --- Para mostrar gasto anual y puntos en el formulario
   const purchasesYear = (form.purchases || []).filter(
     p => new Date(p.date).getFullYear() === yearFilter
   );
   const totalYear = purchasesYear.reduce((sum, p) => sum + p.amount, 0);
 
-  // Función que, de un cliente, calcula “gastado en el año actual” y “puntos”
-  const computeClientStats = useMemo(() => {
-    const mapStats = {};
-    clients.forEach(c => {
-      // GASTO EN EL AÑO ACTUAL
-      const gasto = (c.purchases || [])
-        .filter(pu => new Date(pu.date).getFullYear() === currentYear)
-        .reduce((s, pu) => s + pu.amount, 0);
-      // PUNTOS (si no existe, 0)
-      const pts = typeof c.points === 'number' ? c.points : 0;
-      mapStats[c.id] = { gasto2025: gasto, points: pts };
-    });
-    return mapStats;
-  }, [clients, currentYear]);
+  // Obtener estadísticas rápidas en encabezado
+  const totalClients = clients.length;
+  const totalVIPs = clients.filter(c => (c.tags || []).includes('VIP')).length;
 
   if (center === null) return <p>Cargando CRM...</p>;
 
@@ -301,16 +342,30 @@ export default function CrmPage() {
       <header style={styles.header}>
         <h1 style={styles.logo}>TPV<span style={styles.logoD}>D</span>ive</h1>
       </header>
+
       <main style={styles.main}>
         <div style={styles.topBar}>
           <Link href="/" style={styles.link}>← Panel principal</Link>
           <button style={styles.dangerBtn} onClick={handleDeleteAll}>Borrar todos</button>
         </div>
 
+        {/* ======== Encabezado con métricas pequeñas ======== */}
+        <div style={styles.smallMetrics}>
+          <div style={styles.metricCard}>
+            <small style={styles.metricLabel}>Total Clientes</small>
+            <div style={styles.metricValue}>{totalClients}</div>
+          </div>
+          <div style={styles.metricCard}>
+            <small style={styles.metricLabel}>Clientes VIP</small>
+            <div style={styles.metricValue}>{totalVIPs}</div>
+          </div>
+        </div>
+
+        {/* ======== Controles de búsqueda + modo ======== */}
         <div style={styles.controls}>
           <input
             list="lst"
-            placeholder="Buscar..."
+            placeholder="Buscar por nombre, email, teléfono o ciudad..."
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
             style={styles.input}
@@ -318,6 +373,24 @@ export default function CrmPage() {
           <datalist id="lst">
             {filtered.map((c, i) => <option key={i} value={c.name} />)}
           </datalist>
+
+          <select
+            value={experienceFilter}
+            onChange={e => setExperienceFilter(e.target.value)}
+            style={styles.inputSmall}
+          >
+            <option value="">— Filtrar nivel de experiencia —</option>
+            {[...new Set(clients.map(c => c.experience).filter(x => x))].map((exp, i) => (
+              <option key={i} value={exp}>{exp}</option>
+            ))}
+          </select>
+
+          <button style={styles.tabBtn} onClick={generateEmailList}>
+            Obtener Correos
+          </button>
+          <button style={styles.tabBtn} onClick={exportToCSV}>
+            Exportar Excel
+          </button>
 
           {['manual', 'import', 'google'].map(m => (
             <button
@@ -366,18 +439,17 @@ export default function CrmPage() {
           </button>
         )}
 
-        {/* Tabla de clientes */}
+        {/* ======== Tabla de clientes ======== */}
         <div style={styles.tableWrapper}>
           <table style={styles.table}>
             <thead>
               <tr>
                 {[
                   'Nombre',
-                  'Ciudad',
                   'Email',
                   'Teléfono',
-                  'D.N.I.',
-                  'Experiencia',
+                  'DNI',
+                  'Fecha Nac.',
                   'Puntos',
                   `Gastado ${currentYear}`,
                   'Acciones'
@@ -386,21 +458,33 @@ export default function CrmPage() {
             </thead>
             <tbody>
               {filtered.map(c => {
-                const stats = computeClientStats[c.id] || { gasto2025: 0, points: 0 };
-                const isPremium = stats.gasto2025 >= 1500;
+                // Calcular gasto de año actual
+                const gasto = (c.purchases || [])
+                  .filter(pu => new Date(pu.date).getFullYear() === currentYear)
+                  .reduce((s, pu) => s + pu.amount, 0);
+
                 return (
                   <tr key={c.id} style={styles.tr}>
                     <td style={styles.td}>
-                      {isPremium && '🏅 '}
-                      {c.name}
+                      {c.name}{' '}
+                      {c.phone && (
+                        <a
+                          href={`https://wa.me/${c.phone.replace(/\D/g, '')}?text=Hola%20${encodeURIComponent(c.name)},%20te%20escribimos%20desde%20Buceo%20España`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={styles.whatsappBtn}
+                          title="Enviar WhatsApp"
+                        >
+                          📲
+                        </a>
+                      )}
                     </td>
-                    <td style={styles.td}>{c.city}</td>
                     <td style={styles.td}>{c.email}</td>
                     <td style={styles.td}>{c.phone}</td>
                     <td style={styles.td}>{c.dni}</td>
-                    <td style={styles.td}>{c.experience}</td>
-                    <td style={styles.td}>{stats.points}</td>
-                    <td style={styles.td}>{stats.gasto2025.toFixed(2)}€</td>
+                    <td style={styles.td}>{c.dob}</td>
+                    <td style={styles.td}>{c.points || 0}</td>
+                    <td style={styles.td}>{gasto.toFixed(2)}€</td>
                     <td style={styles.td}>
                       <button style={styles.smallBtn} onClick={() => startEdit(c)}>Editar</button>{' '}
                       <button style={styles.smallDangerBtn} onClick={() => handleDelete(c.id)}>Borrar</button>
@@ -412,7 +496,7 @@ export default function CrmPage() {
           </table>
         </div>
 
-        {/* Formulario manual / edición */}
+        {/* ======== Formulario manual / edición ======== */}
         {showForm && (
           <form onSubmit={editing ? handleSave : handleAdd} style={styles.form}>
             <div style={styles.formRow}>
@@ -424,13 +508,7 @@ export default function CrmPage() {
                   onChange={e => setForm({ ...form, name: e.target.value })}
                   style={styles.input}
                 />
-                <label style={styles.label}>Población 🌎</label>
-                <input
-                  value={form.city}
-                  onChange={e => setForm({ ...form, city: e.target.value })}
-                  style={styles.input}
-                />
-                <label style={styles.label}>Correo electrónico 📧</label>
+                <label style={styles.label}>Email 📧</label>
                 <input
                   type="email"
                   required
@@ -438,7 +516,7 @@ export default function CrmPage() {
                   onChange={e => setForm({ ...form, email: e.target.value })}
                   style={styles.input}
                 />
-                <label style={styles.label}>Teléfono de contacto 📱</label>
+                <label style={styles.label}>Teléfono 📱</label>
                 <input
                   type="tel"
                   required
@@ -446,22 +524,17 @@ export default function CrmPage() {
                   onChange={e => setForm({ ...form, phone: e.target.value })}
                   style={styles.input}
                 />
-                <label style={styles.label}>D.N.I. 📄</label>
+                <label style={styles.label}>DNI 📄</label>
                 <input
                   value={form.dni}
                   onChange={e => setForm({ ...form, dni: e.target.value })}
                   style={styles.input}
                 />
-                <label style={styles.label}>Dirección completa</label>
+                <label style={styles.label}>Fecha de Nacimiento 🔍</label>
                 <input
-                  value={form.address}
-                  onChange={e => setForm({ ...form, address: e.target.value })}
-                  style={styles.input}
-                />
-                <label style={styles.label}>Código postal</label>
-                <input
-                  value={form.postal}
-                  onChange={e => setForm({ ...form, postal: e.target.value })}
+                  type="date"
+                  value={form.dob}
+                  onChange={e => setForm({ ...form, dob: e.target.value })}
                   style={styles.input}
                 />
               </div>
@@ -479,31 +552,16 @@ export default function CrmPage() {
                   onChange={e => setForm({ ...form, referredBy: e.target.value })}
                   style={styles.input}
                 />
-                <label style={styles.label}>Fecha de nacimiento 🔍</label>
+                <label style={styles.label}>Dirección completa</label>
                 <input
-                  type="date"
-                  value={form.dob}
-                  onChange={e => setForm({ ...form, dob: e.target.value })}
+                  value={form.address}
+                  onChange={e => setForm({ ...form, address: e.target.value })}
                   style={styles.input}
                 />
-                <label style={styles.label}>Apodo/Nick 🔥</label>
+                <label style={styles.label}>Código Postal</label>
                 <input
-                  value={form.nickname}
-                  onChange={e => setForm({ ...form, nickname: e.target.value })}
-                  style={styles.input}
-                />
-                <label style={styles.label}>Nº de inmersiones realizadas</label>
-                <input
-                  type="number"
-                  value={form.divesCount}
-                  onChange={e => setForm({ ...form, divesCount: e.target.value })}
-                  style={styles.input}
-                />
-                <label style={styles.label}>¿Hace cuánto que no buceas? 🔔</label>
-                <input
-                  placeholder="p.ej. 3 meses"
-                  value={form.lastDive}
-                  onChange={e => setForm({ ...form, lastDive: e.target.value })}
+                  value={form.postal}
+                  onChange={e => setForm({ ...form, postal: e.target.value })}
                   style={styles.input}
                 />
               </div>
@@ -540,27 +598,6 @@ export default function CrmPage() {
                   <option>Aprendizaje</option>
                 </select>
 
-                <label style={styles.label}>Preocupaciones 👋</label>
-                <textarea
-                  value={form.concerns}
-                  onChange={e => setForm({ ...form, concerns: e.target.value })}
-                  style={styles.textarea}
-                />
-
-                <label style={styles.label}>Necesidades especiales 🍹</label>
-                <textarea
-                  value={form.needs}
-                  onChange={e => setForm({ ...form, needs: e.target.value })}
-                  style={styles.textarea}
-                />
-
-                <label style={styles.label}>Preferencia de comunicación</label>
-                <input
-                  value={form.commPref}
-                  onChange={e => setForm({ ...form, commPref: e.target.value })}
-                  style={styles.input}
-                />
-
                 <label style={styles.label}>Comentarios adicionales 💡</label>
                 <textarea
                   value={form.comments}
@@ -570,7 +607,7 @@ export default function CrmPage() {
               </div>
             </div>
 
-            {/* — NUEVO — sección de Compras filtradas por año */}
+            {/* — Nuevos — sección de Compras filtradas por año — */}
             <div style={{ marginTop: 24 }}>
               <h3>
                 Compras de {yearFilter}{' '}
@@ -601,7 +638,7 @@ export default function CrmPage() {
               </p>
             </div>
 
-            {/* — NUEVO — mostrar puntos actuales */}
+            {/* — Nuevo — mostrar puntos actuales — */}
             <div style={{ marginTop: 24 }}>
               <h3>Puntos acumulados: {form.points || 0}</h3>
               {form.points >= 100 && (
@@ -630,99 +667,265 @@ export default function CrmPage() {
           </form>
         )}
       </main>
+
+      {/* ======== Vista de correos recopilados ======== */}
+      {emailList && (
+        <div style={styles.emailModalOverlay}>
+          <div style={styles.emailModalContent}>
+            <h2>Lista de Correos</h2>
+            <textarea
+              readOnly
+              value={emailList}
+              style={styles.emailListBox}
+            />
+            <button
+              onClick={() => setEmailList('')}
+              style={styles.modalCloseBtn}
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
+      )}
     </div>
-  )
+  );
 }
 
+// ====== Estilos en línea actualizados ======
 const styles = {
-  page: { backgroundColor:'#afcdaa', minHeight:'100vh' }, // <-- COLOR ARREGLADO
+  page: {
+    backgroundColor: '#f2f6fc',
+    minHeight: '100vh',
+    padding: 0           // <— quitar padding a los laterales
+  },
   header: {
-    background:'#fff', padding:'12px 24px',
-    boxShadow:'0 2px 4px rgba(0,0,0,0.1)'
+    background: '#fff',
+    padding: '12px 24px',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+    marginBottom: '16px',
+    borderRadius: '4px'
   },
   logo: {
-    margin:0, fontFamily:'Georgia, serif',
-    fontSize:24, color:'#222'
+    margin: 0,
+    fontFamily: 'Georgia, serif',
+    fontSize: 24,
+    color: '#222'
   },
-  logoD: { color:'red' },
+  logoD: { color: 'red' },
+
   main: {
-    maxWidth:960, margin:'24px auto',
-    background:'#fff', borderRadius:8,
-    boxShadow:'0 4px 8px rgba(0,0,0,0.1)',
-    padding:24
+    width: '100vw',       // Ocupa TODO el ancho de la ventana
+    maxWidth: '100vw',    // Nos aseguramos de que no se limite a 960px
+    margin: 0,            // Sin márgenes
+    background: '#fff',
+    borderRadius: 8,      // Puedes quitarlo (0) si quieres bordes cuadrados
+    boxShadow: '0 4px 8px rgba(0,0,0,0.1)',
+    padding: 24           // Padding interior para no quedar pegado al borde
   },
+
   topBar: {
-    display:'flex', justifyContent:'space-between',
-    alignItems:'center', marginBottom:16
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16
   },
-  link: { textDecoration:'none', color:'#0070f3', fontWeight:500 },
-  controls: {
-    display:'flex', gap:8, alignItems:'center', marginBottom:16,
-    flexWrap:'wrap'
-  },
-  input: {
-    padding:8, borderRadius:4,
-    border:'1px solid #ccc', flex:'1 1 200px',
-    fontSize:14
-  },
-  tabBtn: {
-    background:'#e0f0ff', border:'none',
-    padding:'6px 12px', borderRadius:4,
-    cursor:'pointer'
-  },
-  activeBtn: {
-    background:'#0070f3', color:'#fff', border:'none',
-    padding:'6px 12px', borderRadius:4,
-    cursor:'pointer'
-  },
-  primaryBtn: {
-    background:'#0070f3', color:'#fff', border:'none',
-    padding:'8px 16px', borderRadius:4, cursor:'pointer'
+  link: {
+    textDecoration: 'none',
+    color: '#0070f3',
+    fontWeight: 500
   },
   dangerBtn: {
-    background:'#d9534f', color:'#fff', border:'none',
-    padding:'6px 12px', borderRadius:4, cursor:'pointer'
+    background: '#d9534f',
+    color: '#fff',
+    border: 'none',
+    padding: '6px 12px',
+    borderRadius: 4,
+    cursor: 'pointer'
   },
+
+  /* Pequeñas métricas */
+  smallMetrics: {
+    display: 'flex',
+    gap: '12px',
+    marginBottom: '24px'
+  },
+  metricCard: {
+    flex: '1 1 200px',
+    background: '#0d47a1',
+    color: '#fff',
+    padding: '16px',
+    borderRadius: '8px',
+    textAlign: 'center'
+  },
+  metricLabel: { opacity: 0.8, fontSize: '14px' },
+  metricValue: { fontSize: '24px', marginTop: '4px' },
+
+  /* Controles de búsqueda y modo */
+  controls: {
+    display: 'flex',
+    gap: 8,
+    alignItems: 'center',
+    marginBottom: 16,
+    flexWrap: 'wrap'
+  },
+  input: {
+    padding: 8,
+    borderRadius: 4,
+    border: '1px solid #ccc',
+    flex: '1 1 200px',
+    fontSize: 14
+  },
+  inputSmall: {
+    padding: 8,
+    borderRadius: 4,
+    border: '1px solid #ccc',
+    flex: '0 1 180px',
+    fontSize: 14
+  },
+  tabBtn: {
+    background: '#e0f0ff',
+    border: 'none',
+    padding: '6px 12px',
+    borderRadius: 4,
+    cursor: 'pointer'
+  },
+  activeBtn: {
+    background: '#0070f3',
+    color: '#fff',
+    border: 'none',
+    padding: '6px 12px',
+    borderRadius: 4,
+    cursor: 'pointer'
+  },
+  fileInput: { marginBottom: 16 },
+  error: { color: 'red', marginTop: 4 },
+
+  /* Botón principal en modo manual */
+  primaryBtn: {
+    background: '#0070f3',
+    color: '#fff',
+    border: 'none',
+    padding: '8px 16px',
+    borderRadius: 4,
+    cursor: 'pointer',
+    marginBottom: '16px'
+  },
+
+  /* Tabla de clientes */
+  tableWrapper: {
+    maxHeight: 300,
+    overflowY: 'auto',
+    border: '1px solid #ddd',
+    borderRadius: 4,
+    marginBottom: 16
+  },
+  table: { width: '100%', borderCollapse: 'collapse' },
+  th: {
+    position: 'sticky',
+    top: 0,
+    background: '#f5f5f5',
+    borderBottom: '2px solid #ddd',
+    padding: 8,
+    textAlign: 'left'
+  },
+  tr: { background: '#fff' },
+  td: { borderBottom: '1px solid #eee', padding: 8 },
   smallBtn: {
-    background:'#28a745', color:'#fff', border:'none',
-    padding:'4px 8px', borderRadius:4, cursor:'pointer',
-    fontSize:12
+    background: '#28a745',
+    color: '#fff',
+    border: 'none',
+    padding: '4px 8px',
+    borderRadius: 4,
+    cursor: 'pointer',
+    fontSize: 12,
+    marginRight: '4px'
   },
   smallDangerBtn: {
-    background:'#dc3545', color:'#fff', border:'none',
-    padding:'4px 8px', borderRadius:4, cursor:'pointer',
-    fontSize:12
+    background: '#dc3545',
+    color: '#fff',
+    border: 'none',
+    padding: '4px 8px',
+    borderRadius: 4,
+    cursor: 'pointer',
+    fontSize: 12
   },
-  fileInput: { marginBottom:16 },
-  error: { color:'red', marginTop:4 },
-  tableWrapper: {
-    maxHeight:300, overflowY:'auto',
-    border:'1px solid #ddd', borderRadius:4, marginBottom:16
+  whatsappBtn: {
+    marginLeft: '6px',
+    fontSize: '18px',
+    textDecoration: 'none'
   },
-  table: { width:'100%', borderCollapse:'collapse' },
-  th: {
-    position:'sticky', top:0, background:'#f5f5f5',
-    borderBottom:'2px solid #ddd', padding:8, textAlign:'left'
-  },
-  tr: { background:'#fff' },
-  td: { borderBottom:'1px solid #eee', padding:8 },
+
+  /* Formulario manual / edición */
   form: {
-    border:'1px solid #ddd', borderRadius:4,
-    padding:16, marginTop:16, overflowX:'auto'
+    border: '1px solid #ddd',
+    borderRadius: 4,
+    padding: 16,
+    marginTop: 16,
+    overflowX: 'auto'
   },
-  formRow: { display:'flex', gap:16 },
-  formCol: { flex:'1 1 300px' },
-  label: { display:'block', marginBottom:4, fontWeight:500 },
+  formRow: { display: 'flex', gap: 16, flexWrap: 'wrap' },
+  formCol: { flex: '1 1 300px', minWidth: '250px' },
+  label: { display: 'block', marginBottom: 4, fontWeight: 500 },
   textarea: {
-    width:'100%', padding:8, borderRadius:4,
-    border:'1px solid #ccc', fontSize:14, resize:'vertical'
+    width: '100%',
+    padding: 8,
+    borderRadius: 4,
+    border: '1px solid #ccc',
+    fontSize: 14,
+    resize: 'vertical'
   },
   selectMulti: {
-    width:'100%', height:80, padding:8,
-    border:'1px solid #ccc', borderRadius:4,
-    fontSize:14
+    width: '100%',
+    height: 80,
+    padding: 8,
+    border: '1px solid #ccc',
+    borderRadius: 4,
+    fontSize: 14,
+    marginBottom: '12px'
   },
   formActions: {
-    marginTop:16, textAlign:'right'
+    marginTop: 16,
+    textAlign: 'right'
+  },
+
+  /* Modal de lista de correos */
+  emailModalOverlay: {
+    position: 'fixed',
+    left: 0,
+    top: 0,
+    width: '100vw',
+    height: '100vh',
+    background: 'rgba(0,0,0,0.3)',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 3000
+  },
+  emailModalContent: {
+    background: '#fff',
+    borderRadius: 8,
+    padding: 24,
+    width: '90%',
+    maxWidth: 600,
+    boxShadow: '0 6px 32px rgba(0,0,0,0.1)'
+  },
+  emailListBox: {
+    width: '100%',
+    height: 200,
+    padding: 8,
+    fontSize: 14,
+    borderRadius: 4,
+    border: '1px solid #ccc',
+    marginBottom: 16,
+    resize: 'none'
+  },
+  modalCloseBtn: {
+    background: '#0070f3',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 4,
+    padding: '8px 16px',
+    fontSize: 14,
+    cursor: 'pointer'
   }
-}
+};
