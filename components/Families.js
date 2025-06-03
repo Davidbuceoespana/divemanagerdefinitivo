@@ -1,23 +1,52 @@
 // components/Families.js
-import { useState, useEffect } from 'react';
-import Link from 'next/link';
+import { useState, useEffect } from "react";
+import Link from "next/link";
 
 export default function Families() {
-  // 1) Estado para saber cuándo ya estamos en cliente
+  // 1) Saber cuándo estamos ya en cliente y cuál es el centro activo
   const [mounted, setMounted] = useState(false);
-  // 2) Centro activo (se lee de localStorage solo en cliente)
-  const [center, setCenter] = useState(null);
+  const [center, setCenter] = useState("");
 
+  // 2) Estados para gestionar familias y formulario (input + edición)
+  const [families, setFamilies] = useState([]);
+  const [input, setInput] = useState("");
+  const [editIdx, setEditIdx] = useState(-1);
+
+  // 3) Al montarse en el cliente, leemos 'active_center' y marcamos 'mounted'
   useEffect(() => {
-    // Este useEffect solo corre en el cliente
-    if (typeof window !== 'undefined') {
-      const c = localStorage.getItem('active_center');
-      setCenter(c || '');
+    if (typeof window !== "undefined") {
+      const c = localStorage.getItem("active_center") || "";
+      setCenter(c);
       setMounted(true);
     }
   }, []);
 
-  // 3) Mientras no estemos montados en cliente, mostramos "Cargando"
+  // 4) Key dinámica para localStorage según el centro
+  const STORAGE_KEY = `dive_manager_families_${center}`;
+
+  // 5) Cargar familias guardadas *solo* cuando ya estamos montados y existe un center no vacío
+  useEffect(() => {
+    if (!mounted || !center) return;
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      try {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          setFamilies(arr);
+        }
+      } catch {
+        console.error("No se pudo parsear la lista de familias en localStorage");
+      }
+    }
+  }, [mounted, center, STORAGE_KEY]);
+
+  // 6) Cada vez que cambie `families` (y exista un center), persistimos en localStorage
+  useEffect(() => {
+    if (!center) return;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(families));
+  }, [families, center, STORAGE_KEY]);
+
+  // 7) Early returns: mostrar mensajes antes de renderizar la UI
   if (!mounted) {
     return (
       <div style={styles.container}>
@@ -25,8 +54,6 @@ export default function Families() {
       </div>
     );
   }
-
-  // 4) Si ya estamos montados pero no hay centro seleccionado
   if (!center) {
     return (
       <div style={styles.container}>
@@ -39,61 +66,27 @@ export default function Families() {
     );
   }
 
-  // 5) Clave dinámica en localStorage para este centro
-  const STORAGE_KEY = `dive_manager_families_${center}`;
-
-  // 6) Estados: lista de familias, input, índice de edición
-  const [families, setFamilies] = useState([]);
-  const [input, setInput] = useState('');
-  const [editIdx, setEditIdx] = useState(-1);
-
-  // 7) Carga inicial de familias cuando cambie STORAGE_KEY
-  useEffect(() => {
-    // Solo si existe un center válido (cadena no vacía)
-    if (center) {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        try {
-          const arr = JSON.parse(raw);
-          if (Array.isArray(arr)) {
-            setFamilies(arr);
-          }
-        } catch {
-          console.error('Error parseando familias desde localStorage');
-        }
-      }
-    }
-    // Nota: no incluimos "families" en la dependencia para no caer en bucle
-  }, [STORAGE_KEY, center]);
-
-  // 8) Persiste cambios en localStorage cada vez que families cambie
-  useEffect(() => {
-    if (center) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(families));
-    }
-  }, [families, STORAGE_KEY, center]);
-
-  // 9) Handlers
+  // 8) Handlers de añadir/editar/borrar
   const handleSubmit = (e) => {
     e.preventDefault();
     const val = input.trim();
     if (!val) return;
 
+    // Si estamos editando, sustituir en la posición correspondiente
     if (editIdx >= 0) {
-      // Actualizamos la familia existente
       setFamilies((prev) =>
         prev.map((x, i) => (i === editIdx ? val : x))
       );
     } else {
-      // Añadimos nueva familia al final
+      // Si la familia no existe aún, añadirla
       if (!families.includes(val)) {
         setFamilies((prev) => [...prev, val]);
       } else {
-        alert('Esa familia ya existe.');
+        alert("Esa familia ya existe.");
       }
     }
 
-    setInput('');
+    setInput("");
     setEditIdx(-1);
   };
 
@@ -105,17 +98,18 @@ export default function Families() {
   const handleDelete = (i) => {
     if (
       confirm(
-        `¿Seguro que quieres borrar la familia “${families[i]}”?\nEsto no tiene vuelta atrás.`
+        `¿Seguro que quieres borrar la familia “${families[i]}”?\nEsta acción no se puede deshacer.`
       )
     ) {
       setFamilies((prev) => prev.filter((_, idx) => idx !== i));
       if (editIdx === i) {
-        setInput('');
+        setInput("");
         setEditIdx(-1);
       }
     }
   };
 
+  // 9) Render UI principal
   return (
     <div style={styles.container}>
       <h2 style={styles.title}>Gestión de Familias — Centro: {center}</h2>
@@ -133,13 +127,13 @@ export default function Families() {
           style={styles.input}
         />
         <button type="submit" style={styles.addBtn}>
-          {editIdx >= 0 ? 'Actualizar' : 'Añadir'}
+          {editIdx >= 0 ? "Actualizar" : "Añadir"}
         </button>
         {editIdx >= 0 && (
           <button
             type="button"
             onClick={() => {
-              setInput('');
+              setInput("");
               setEditIdx(-1);
             }}
             style={styles.cancelBtn}
@@ -180,108 +174,107 @@ export default function Families() {
   );
 }
 
-// 10) Estilos en línea (puedes reemplazarlos por tu CSS o Tailwind si gustas)
+// 10) Estilos en línea
 const styles = {
   container: {
-    padding: '20px',
-    fontFamily: 'Arial, sans-serif',
-    maxWidth: '600px',
-    margin: '0 auto',
-    background: '#f7f9fb',
-    borderRadius: '8px',
-    marginTop: '40px',
-    boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+    padding: "20px",
+    fontFamily: "Arial, sans-serif",
+    maxWidth: "600px",
+    margin: "0 auto",
+    background: "#f7f9fb",
+    borderRadius: "8px",
+    marginTop: "40px",
+    boxShadow: "0 2px 8px rgba(0,0,0,0.1)"
   },
   title: {
     margin: 0,
-    marginBottom: '12px',
-    fontSize: '22px',
-    color: '#003566',
-    textAlign: 'center',
+    marginBottom: "12px",
+    fontSize: "22px",
+    color: "#003566",
+    textAlign: "center"
   },
   link: {
-    display: 'inline-block',
-    marginBottom: '16px',
-    color: '#0070f3',
-    textDecoration: 'none',
+    display: "inline-block",
+    marginBottom: "16px",
+    color: "#0070f3",
+    textDecoration: "none"
   },
   loadingText: {
-    fontSize: '18px',
-    color: '#666',
-    textAlign: 'center',
+    fontSize: "18px",
+    color: "#666",
+    textAlign: "center"
   },
   errorText: {
-    color: 'red',
-    marginBottom: '12px',
-    textAlign: 'center',
+    color: "red",
+    marginBottom: "12px",
+    textAlign: "center"
   },
   form: {
-    display: 'flex',
-    gap: '8px',
-    margin: '20px 0',
+    display: "flex",
+    gap: "8px",
+    margin: "20px 0"
   },
   input: {
     flex: 1,
-    padding: '8px',
-    fontSize: '14px',
-    borderRadius: '4px',
-    border: '1px solid #ccc',
+    padding: "8px",
+    fontSize: "14px",
+    borderRadius: "4px",
+    border: "1px solid #ccc"
   },
   addBtn: {
-    padding: '8px 12px',
-    background: '#17bf6e',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    fontWeight: 600,
+    padding: "8px 12px",
+    background: "#17bf6e",
+    color: "#fff",
+    border: "none",
+    borderRadius: "4px",
+    cursor: "pointer",
+    fontWeight: 600
   },
   cancelBtn: {
-    padding: '8px 12px',
-    background: '#888',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    marginLeft: '8px',
-    fontSize: '14px',
+    padding: "8px 12px",
+    background: "#888",
+    color: "#fff",
+    border: "none",
+    borderRadius: "4px",
+    cursor: "pointer",
+    marginLeft: "8px",
+    fontSize: "14px"
   },
   noDataText: {
-    color: '#666',
-    fontStyle: 'italic',
+    color: "#666",
+    fontStyle: "italic"
   },
   list: {
-    listStyle: 'none',
+    listStyle: "none",
     padding: 0,
-    margin: 0,
+    margin: 0
   },
   listItem: {
-    background: '#fff',
-    border: '1px solid #ddd',
-    borderRadius: '6px',
-    padding: '10px 12px',
-    marginBottom: '10px',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    background: "#fff",
+    border: "1px solid #ddd",
+    borderRadius: "6px",
+    padding: "10px 12px",
+    marginBottom: "10px",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center"
   },
   familyName: {
-    fontSize: '16px',
-    color: '#003566',
+    fontSize: "16px",
+    color: "#003566"
   },
   editBtn: {
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    fontSize: '18px',
-    marginRight: '8px',
+    background: "none",
+    border: "none",
+    cursor: "pointer",
+    fontSize: "18px",
+    marginRight: "8px"
   },
   deleteBtn: {
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    fontSize: '18px',
-    color: '#f5576c',
-  },
+    background: "none",
+    border: "none",
+    cursor: "pointer",
+    fontSize: "18px",
+    color: "#f5576c"
+  }
 };
-
