@@ -159,7 +159,7 @@ export default function Dashboard() {
 
   // Clientes destacados
   const clientesVIP = clients.filter(c =>
-    [ "VIP", "viajero" ].some(tag => (c.tags || []).includes(tag))
+    ["VIP", "viajero"].some(tag => (c.tags || []).includes(tag))
   ).slice(0, 5);
 
   // Oportunidades de venta
@@ -205,13 +205,13 @@ export default function Dashboard() {
         </div>
         <nav style={styles.navLinks}>
           <Link href="/crm"><a style={styles.navLink}>CRM</a></Link>
-          <Link href="/reservas"><a style={styles.navLink}>Reservas</a></Link>
           <Link href="/agenda"><a style={styles.navLink}>Calendario</a></Link>
+          <Link href="/reservas"><a style={styles.navLink}>Reservas</a></Link>
           <Link href="/caja"><a style={styles.navLink}>Ventas</a></Link>
-          <Link href="/inventario"><a style={styles.navLink}>Inventario</a></Link>
-          <Link href="/productos"><a style={styles.navLink}>Productos</a></Link>
-          <Link href="/personal"><a style={styles.navLink}>Personal</a></Link>
-          <Link href="/informes"><a style={styles.navLink}>Informes</a></Link>
+          <Link href="/gastos"><a style={styles.navLink}>Gastos</a></Link>
+          <Link href="/bonos"><a style={styles.navLink}>Bonos</a></Link>
+          <Link href="/seguimiento"><a style={styles.navLink}>Seguimientos</a></Link>
+          <Link href="/oportunidades-venta"><a style={styles.navLink}>Oportunidades Venta</a></Link>
         </nav>
       </aside>
 
@@ -232,16 +232,8 @@ export default function Dashboard() {
           <Metric label="Bonos abiertos" value={openBonos} />
         </section>
 
-        {/* ------ Vistas especiales: inventario, reservas y ventas ------ */}
+        {/* ------ Vistas especiales: Próximas Reservas ------ */}
         <section style={styles.overviewSection}>
-          {/* Inventario (simulado con cifras de ejemplo) */}
-          <div style={styles.widget}>
-            <h2 style={styles.widgetTitle}>Inventario</h2>
-            <p style={styles.widgetText}>Trajes disponibles: <strong>32</strong></p>
-            <p style={styles.widgetText}>Aletas disponibles: <strong>48</strong></p>
-            <p style={styles.widgetText}>Reguladores: <strong>15</strong></p>
-          </div>
-
           {/* Próximas reservas */}
           <div style={styles.widget}>
             <h2 style={styles.widgetTitle}>Próximas Reservas</h2>
@@ -251,24 +243,12 @@ export default function Dashboard() {
               <button style={styles.viewBtn}>Ver todas</button>
             </Link>
           </div>
-
-          {/* Ventas del día (simulado) */}
-          <div style={styles.widget}>
-            <h2 style={styles.widgetTitle}>Ventas Hoy</h2>
-            <p style={styles.widgetText}>Ingresos: <strong>€2,450</strong></p>
-            <p style={styles.widgetText}>Tickets: <strong>23</strong></p>
-            <p style={styles.widgetText}>Devoluciones: <strong>2</strong></p>
-            <Link href="/caja">
-              <button style={styles.viewBtn}>Ir a Caja</button>
-            </Link>
-          </div>
         </section>
 
         {/* ------ Gráfica de ventas (placeholder) ------ */}
         <section style={styles.chartSection}>
           <h2 style={styles.chartTitle}>Evolución de Ventas Mensual</h2>
           <div style={styles.chartPlaceholder}>
-            {/* Aquí podrías integrar una librería de gráficas como Recharts o Chart.js */}
             <p style={{ color: "#777" }}>[Gráfica interactiva de ventas]</p>
           </div>
         </section>
@@ -289,15 +269,15 @@ export default function Dashboard() {
             <Link href="/productos">
               <button style={styles.actionBtn}>＋ Nuevo Producto</button>
             </Link>
+            <Link href="/agenda">
+              <button style={styles.actionBtn}>＋ Agendar Evento</button>
+            </Link>
             <button
               style={styles.actionBtn}
               onClick={() => setShowAlarmModal(true)}
             >
               🔔 Nueva Alarma
             </button>
-            <Link href="/informes">
-              <button style={styles.actionBtn}>📊 Generar Informe</button>
-            </Link>
           </div>
         </section>
 
@@ -409,12 +389,11 @@ const styles = {
   },
   /* ---------- Sidebar ---------- */
   sidebar: {
-    width: 240,
+    width: 200,
     background: "#0d47a1",
     padding: 20,
     display: "flex",
-    flexDirection: "column",
-    justifyContent: "space-between"
+    flexDirection: "column"
   },
   sidebarHeader: {
     marginBottom: 40
