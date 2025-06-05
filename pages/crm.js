@@ -123,6 +123,7 @@ export default function CrmPage() {
   const [yearFilter, setYearFilter] = useState(currentYear);
   const [experienceFilter, setExperienceFilter] = useState('');
   const [emailList, setEmailList] = useState('');
+  const [selectedClient, setSelectedClient] = useState(null);
 
   // Persistir sheetUrl en localStorage
   useEffect(() => {
@@ -155,6 +156,8 @@ export default function CrmPage() {
         purchases: Array.isArray(c.purchases) ? c.purchases : [],
         points:    typeof c.points === 'number' ? c.points : 0
       }));
+      // Ordenar por fecha de registro descendente
+      normalized.sort((a, b) => new Date(b.registered) - new Date(a.registered));
       setClients(normalized);
     }
   }, [center, STORAGE_KEY]);
@@ -246,15 +249,12 @@ export default function CrmPage() {
     });
   }, [clients, mode, searchTerm, experienceFilter]);
 
-  // Auto-abre detalle si solo hay un resultado
+   // Auto-abre detalle si solo hay un resultado y se está buscando
   useEffect(() => {
-    if (filtered.length === 1) {
-      setEditing(filtered[0]);
-      setForm(filtered[0]);
-      setShowForm(true);
+    if (filtered.length === 1 && searchTerm) {
+      setSelectedClient(filtered[0]);
     }
-  }, [filtered]);
-
+  }, [filtered, searchTerm]);
   // CRUD Actions
   const startEdit = c => {
     setEditing(c);
@@ -271,6 +271,7 @@ export default function CrmPage() {
     setClients(c => [nuevo, ...c]);
     setForm(initialForm);
     setShowForm(false);
+    setSearchTerm('');
   };
   const handleSave = e => {
     e.preventDefault();
@@ -278,6 +279,7 @@ export default function CrmPage() {
     setEditing(null);
     setForm(initialForm);
     setShowForm(false);
+    setSearchTerm('');
   };
   const handleDeleteAll = () => {
     if (confirm('¿Borrar TODOS los clientes?')) setClients([]);
@@ -485,7 +487,13 @@ export default function CrmPage() {
                     <td style={styles.td}>{c.dob}</td>
                     <td style={styles.td}>{c.points || 0}</td>
                     <td style={styles.td}>{gasto.toFixed(2)}€</td>
-                    <td style={styles.td}>
+                      <td style={styles.td}>
+                      <button
+                        style={styles.smallBtn}
+                        onClick={() => setSelectedClient(c)}
+                      >
+                        Ver
+                      </button>{' '}
                       <button style={styles.smallBtn} onClick={() => startEdit(c)}>Editar</button>{' '}
                       <button style={styles.smallDangerBtn} onClick={() => handleDelete(c.id)}>Borrar</button>
                     </td>
@@ -658,6 +666,7 @@ export default function CrmPage() {
                   setShowForm(false);
                   setEditing(null);
                   setForm(initialForm);
+                  setSearchTerm('');
                 }}
                 style={styles.smallDangerBtn}
               >
@@ -670,9 +679,9 @@ export default function CrmPage() {
 
       {/* ======== Vista de correos recopilados ======== */}
       {emailList && (
-        <div style={styles.emailModalOverlay}>
-          <div style={styles.emailModalContent}>
-            <h2>Lista de Correos</h2>
+        <div style={styles.emailModalOverlay}>␊
+          <div style={styles.emailModalContent}>␊
+            <h2>Lista de Correos</h2>␊
             <textarea
               readOnly
               value={emailList}
@@ -680,6 +689,34 @@ export default function CrmPage() {
             />
             <button
               onClick={() => setEmailList('')}
+              style={styles.modalCloseBtn}
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
+      )}
+
+       {/* ======== Ventana emergente con datos básicos ======== */}
+      {selectedClient && (
+        <div style={styles.emailModalOverlay}>
+          <div style={styles.emailModalContent}>
+            <h2>{selectedClient.name}</h2>
+            <p><strong>Email:</strong> {selectedClient.email}</p>
+            <p><strong>Teléfono:</strong> {selectedClient.phone}</p>
+            <p><strong>Ciudad:</strong> {selectedClient.city}</p>
+            <p><strong>Fecha Nac.:</strong> {selectedClient.dob}</p>
+            <p><strong>Puntos:</strong> {selectedClient.points || 0}</p>
+            <p>
+              <strong>Gastado {currentYear}:</strong>{' '}
+              {(
+                (selectedClient.purchases || [])
+                  .filter(pu => new Date(pu.date).getFullYear() === currentYear)
+                  .reduce((s, pu) => s + pu.amount, 0)
+              ).toFixed(2)}€
+            </p>
+            <button
+              onClick={() => { setSelectedClient(null); setSearchTerm(''); }}
               style={styles.modalCloseBtn}
             >
               Cerrar
@@ -713,16 +750,16 @@ const styles = {
   },
   logoD: { color: 'red' },
 
-  main: {
+ main: {
     width: '100vw',       // Ocupa TODO el ancho de la ventana
     maxWidth: '100vw',    // Nos aseguramos de que no se limite a 960px
     margin: 0,            // Sin márgenes
     background: '#fff',
     borderRadius: 8,      // Puedes quitarlo (0) si quieres bordes cuadrados
     boxShadow: '0 4px 8px rgba(0,0,0,0.1)',
-    padding: 24           // Padding interior para no quedar pegado al borde
+    padding: 24,          // Padding interior para no quedar pegado al borde
+    minHeight: '80vh'
   },
-
   topBar: {
     display: 'flex',
     justifyContent: 'space-between',
@@ -812,8 +849,8 @@ const styles = {
   },
 
   /* Tabla de clientes */
-  tableWrapper: {
-    maxHeight: 300,
+   tableWrapper: {
+    maxHeight: '70vh',
     overflowY: 'auto',
     border: '1px solid #ddd',
     borderRadius: 4,
