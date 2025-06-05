@@ -706,6 +706,16 @@ export default function CrmPage() {
             <p><strong>Email:</strong> {selectedClient.email}</p>
             <p><strong>Teléfono:</strong> {selectedClient.phone}</p>
             <p><strong>Ciudad:</strong> {selectedClient.city}</p>
+            <p><strong>Fecha Nac.:</strong> {selectedClient.dob}</p>
+            <p><strong>Puntos:</strong> {selectedClient.points || 0}</p>
+            <p>
+              <strong>Gastado {currentYear}:</strong>{' '}
+              {(
+                (selectedClient.purchases || [])
+                  .filter(pu => new Date(pu.date).getFullYear() === currentYear)
+                  .reduce((s, pu) => s + pu.amount, 0)
+              ).toFixed(2)}€
+            </p>
             <button
               onClick={() => { setSelectedClient(null); setSearchTerm(''); }}
               style={styles.modalCloseBtn}
