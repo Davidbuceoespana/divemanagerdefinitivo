@@ -1,98 +1,121 @@
-// pages/crm.js
 import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 
-//
-// Reemplaza solamente la función parseCSV; todo lo demás está intacto.
-//
+// =============================================================
+// CRM RENOVADO
+// - Visual más atractivo en tarjetas
+// - Mantiene TODAS las cualidades (buscar, importar CSV, Google Sheet, exportar, emails, ver/editar/borrar)
+// - Solo 7 campos visibles por cliente:
+//   name (Nombre y apellidos), dob (Fecha de nacimiento), email, phone,
+//   address (Dirección completa), dni, certification (Titulación de buceo)
+// - Internamente conservamos id, registered, purchases, points para no perder métricas
+// =============================================================
+
+// =================== CSV PARSER ===============================
+// Robusto con delimitador auto (coma o punto y coma) y cabeceras flexibles.
 function parseCSV(csvText) {
-  // 1) Partimos líneas
-  const lines = csvText.trim().split(/\r?\n/);
+  const lines = (csvText || '').trim().split(/\r?\n/);
   if (lines.length < 2) return [];
 
-  // 2) Detectar delimitador: si hay más ';' que ',', usamos ';'
+  // Detectar delimitador por primera línea
   const headerLine = lines[0];
   const commaCount = (headerLine.match(/,/g) || []).length;
   const semiCount = (headerLine.match(/;/g) || []).length;
   const delimiter = semiCount > commaCount ? ';' : ',';
 
-  // 3) Cabeceras crudas y normalizadas
+  // Normalizador de texto de cabecera
+  const norm = (s) => (s || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // quita tildes
+    .replace(/[^a-z0-9 ]/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+
+  // Cabeceras crudas y normalizadas
   const rawHeaders = headerLine.split(delimiter).map(h => h.trim());
-  const normalized = rawHeaders.map(h =>
-    h
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')   // quita tildes
-      .replace(/[^a-zA-Z0-9 ]/g, '')      // quita emojis y signos
-      .toLowerCase()
-  );
+  const headers = rawHeaders.map(norm);
 
-  console.log('CSV Headers:', rawHeaders);
-  console.log('Normalized:', normalized, 'Delimiter:', JSON.stringify(delimiter));
+  // Localizar índices de campos (admite variantes)
+  const idx = (predicates) => {
+    for (let i = 0; i < headers.length; i++) {
+      const h = headers[i];
+      if (predicates.some(p => p(h))) return i;
+    }
+    return -1;
+  };
 
-  // 4) Mapeamos cada encabezado a tu campo
-  const keyMap = normalized.map(h => {
-    if (h.includes('nombre completo'))       return 'name';
-    if (h.includes('poblacion'))             return 'city';
-    if (h.includes('correo electronico'))    return 'email';
-    if (h.includes('telefono de contacto') || h.includes('telefono')) return 'phone';
-    if (h.includes('d.n.i') || h.includes('dni'))   return 'dni';
-    if (h.includes('nivel de experiencia'))  return 'experience';
-    if (h.includes('como nos has conocido')) return 'referredBy';
-    if (h.includes('fecha de nacimiento'))   return 'dob';
-    if (h.includes('apodo') || h.includes('nick'))       return 'nickname';
-    if (h.includes('inmersiones'))           return 'divesCount';
-    if (h.includes('hace cuanto que no buceas')) return 'lastDive';
-    if (h.includes('intereses especiales'))  return 'interests';
-    if (h.includes('palabras clave'))        return 'keywords';
-    if (h.includes('preocupaciones'))        return 'concerns';
-    if (h.includes('necesidades especiales')) return 'needs';
-    if (h.includes('preferencia de comunicacion')) return 'commPref';
-    if (h.includes('comentarios adicionales'))     return 'comments';
-    return null;
-  });
+  // Regla: nombre puede venir como "nombre y apellidos" o en dos columnas
+  const nameIdx = idx([
+    h => h.includes('nombre y apellidos'),
+    h => h === 'nombre',
+    h => h.includes('full name'),
+  ]);
+  const firstNameIdx = nameIdx === -1 ? idx([h => h === 'nombre', h => h.includes('first')]) : -1;
+  const lastNameIdx  = nameIdx === -1 ? idx([h => h.includes('apellidos'), h => h.includes('last')]) : -1;
 
-  // 5) Convertimos filas a objetos
-  return lines.slice(1).map(line => {
+  const dobIdx = idx([
+    h => h.includes('fecha de nacimiento'),
+    h => h.includes('fecha nacimiento'),
+    h => h === 'nacimiento',
+    h => h === 'dob',
+  ]);
+
+  const emailIdx = idx([h => h.includes('correo electronico'), h => h === 'email', h => h.includes('correo')]);
+  const phoneIdx = idx([h => h.includes('telefono'), h => h.includes('movil'), h => h.includes('celular'), h => h.includes('phone')]);
+
+  const addressIdx = idx([
+    h => h.includes('direccion completa'),
+    h => h === 'direccion',
+    h => h === 'direccion postal',
+    h => h.includes('address'),
+  ]);
+
+  const dniIdx = idx([h => h === 'dni', h => h.includes('d n i'), h => h === 'nie', h => h.includes('documento'), h => h.includes('id')]);
+
+  const certIdx = idx([
+    h => h.includes('titulacion de buceo'),
+    h => h === 'titulacion',
+    h => h.includes('certificacion'),
+    h => h.includes('certification'),
+    h => h.includes('nivel de buceo'),
+    h => h === 'nivel',
+    h => h.includes('qualification'),
+  ]);
+
+  const dataLines = lines.slice(1);
+
+  return dataLines.map(line => {
     const cols = line.split(delimiter).map(c => c.trim());
-    const obj = {};
 
-    keyMap.forEach((field, i) => {
-      if (!field) return;
-      const raw = cols[i] || '';
-      if (field === 'interests' || field === 'keywords') {
-        obj[field] = raw
-          .split(';')
-          .map(x => x.trim())
-          .filter(x => x);
-      } else {
-        obj[field] = raw;
-      }
-    });
+    let name = '';
+    if (nameIdx !== -1) {
+      name = cols[nameIdx] || '';
+    } else if (firstNameIdx !== -1 || lastNameIdx !== -1) {
+      const fn = firstNameIdx !== -1 ? (cols[firstNameIdx] || '') : '';
+      const ln = lastNameIdx  !== -1 ? (cols[lastNameIdx]  || '') : '';
+      name = `${fn} ${ln}`.trim();
+    }
 
-    return {
+    const obj = {
       id: Date.now() + Math.random(),
-      name:       obj.name       || '',
-      city:       obj.city       || '',
-      email:      obj.email      || '',
-      phone:      obj.phone      || '',
-      dni:        obj.dni        || '',
-      experience: obj.experience || '',
-      referredBy: obj.referredBy || '',
-      dob:        obj.dob        || '',
-      nickname:   obj.nickname   || '',
-      divesCount: obj.divesCount || '',
-      lastDive:   obj.lastDive   || '',
-      interests:  obj.interests  || [],
-      keywords:   obj.keywords   || [],
-      concerns:   obj.concerns   || '',
-      needs:      obj.needs      || '',
-      commPref:   obj.commPref   || '',
-      comments:   obj.comments   || '',
-      // 💡 Inicializamos purchases y points en 0 si no vienen
+      name,
+      dob:        dobIdx     !== -1 ? (cols[dobIdx]    || '') : '',
+      email:      emailIdx   !== -1 ? (cols[emailIdx]  || '') : '',
+      phone:      phoneIdx   !== -1 ? (cols[phoneIdx]  || '') : '',
+      address:    addressIdx !== -1 ? (cols[addressIdx]|| '') : '',
+      dni:        dniIdx     !== -1 ? (cols[dniIdx]    || '') : '',
+      certification: certIdx !== -1 ? (cols[certIdx]   || '') : '',
       purchases:  [],
       points:     0,
-      registered: new Date().toISOString()
+      registered: new Date().toISOString(),
     };
+
+    // Limpieza ligera
+    obj.phone = (obj.phone || '').replace(/\s+/g, ' ').trim();
+    obj.email = (obj.email || '').trim();
+    obj.dni   = (obj.dni   || '').trim().toUpperCase();
+
+    return obj;
   });
 }
 
@@ -109,57 +132,65 @@ export default function CrmPage() {
   const currentYear = new Date().getFullYear();
 
   const [clients, setClients] = useState([]);
-  const [mode, setMode] = useState('manual');
+  const [mode, setMode] = useState('manual'); // manual | import | google
   const [file, setFile] = useState(null);
   const [sheetUrl, setSheetUrl] = useState(
-    typeof window !== 'undefined'
-      ? localStorage.getItem('sheetUrl') || ''
-      : ''
+    typeof window !== 'undefined' ? localStorage.getItem('sheetUrl') || '' : ''
   );
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [yearFilter, setYearFilter] = useState(currentYear);
-  const [experienceFilter, setExperienceFilter] = useState('');
   const [emailList, setEmailList] = useState('');
   const [selectedClient, setSelectedClient] = useState(null);
+  const [certFilter, setCertFilter] = useState('');
 
-  // Persistir sheetUrl en localStorage
+  // Persistir sheetUrl
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('sheetUrl', sheetUrl);
-    }
+    if (typeof window !== 'undefined') localStorage.setItem('sheetUrl', sheetUrl);
   }, [sheetUrl]);
 
+  // ======= Modelo de cliente (7 campos + meta) =======
   const initialForm = {
-    name:       '', city:       '', email:      '', phone:      '', dni:        '',
-    experience: '', referredBy: '', dob:        '', nickname:   '',
-    divesCount: '', lastDive:   '', interests:  [], keywords:   [], concerns:   '',
-    needs:      '', commPref:   '', comments:   '', address:    '', postal:    '',
-    // Campos para fidelización y compras
-    purchases:  [], // [{ date, product, amount }]
-    points:     0   // puntos acumulados
+    name: '',
+    dob: '',
+    email: '',
+    phone: '',
+    address: '',
+    dni: '',
+    certification: '',
+    purchases: [],
+    points: 0,
   };
   const [form, setForm] = useState(initialForm);
 
-  // Carga inicial de clientes desde localStorage
+  // ======= Carga inicial: migración suave desde versiones anteriores =======
   useEffect(() => {
     if (!center) return;
     const st = localStorage.getItem(STORAGE_KEY);
-    if (st) {
-      const arr = JSON.parse(st);
-      // Asegurarnos de que cada cliente tenga purchases y points
-      const normalized = arr.map(c => ({
-        ...initialForm,
-        ...c,
+    if (!st) return;
+    const arr = JSON.parse(st);
+
+    const normalized = arr.map((c) => {
+      // Derivar nombre si venía separado
+      const name = c.name || `${c.firstName || ''} ${c.lastName || ''}`.trim();
+      return {
+        id: c.id || Date.now() + Math.random(),
+        name: name || '',
+        dob: c.dob || '',
+        email: c.email || '',
+        phone: c.phone || '',
+        address: c.address || c.direccion || c.city || '',
+        dni: c.dni || c.nie || '',
+        certification: c.certification || c.titulacion || c.experience || '',
         purchases: Array.isArray(c.purchases) ? c.purchases : [],
-        points:    typeof c.points === 'number' ? c.points : 0
-      }));
-      // Ordenar por fecha de registro descendente
-      normalized.sort((a, b) => new Date(b.registered) - new Date(a.registered));
-      setClients(normalized);
-    }
+        points: typeof c.points === 'number' ? c.points : 0,
+        registered: c.registered || new Date().toISOString(),
+      };
+    });
+
+    normalized.sort((a, b) => new Date(b.registered) - new Date(a.registered));
+    setClients(normalized);
   }, [center, STORAGE_KEY]);
 
   // Guardar cambios en clientes
@@ -168,11 +199,11 @@ export default function CrmPage() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(clients));
   }, [clients, center, STORAGE_KEY]);
 
-  // Importar CSV (con orden invertido)
+  // Importar CSV
   useEffect(() => {
     if (mode === 'import' && file) {
       const reader = new FileReader();
-      reader.onload = e => {
+      reader.onload = (e) => {
         const parsed = parseCSV(e.target.result);
         setClients(parsed.reverse());
       };
@@ -180,16 +211,14 @@ export default function CrmPage() {
     }
   }, [mode, file]);
 
-  // Google mode: carga inicial + polling
+  // Google Sheet polling
   useEffect(() => {
-    if (mode === 'google') {
-      fetchSheet();
-      const id = setInterval(fetchSheet, 30000);
-      return () => clearInterval(id);
-    }
+    if (mode !== 'google') return;
+    fetchSheet();
+    const id = setInterval(fetchSheet, 30000);
+    return () => clearInterval(id);
   }, [mode, sheetUrl]);
 
-  // --- Función para cargar Google Sheets ---
   function fetchSheet() {
     if (!sheetUrl) return;
     setError('');
@@ -198,20 +227,14 @@ export default function CrmPage() {
       csvUrl = sheetUrl;
     } else {
       const m = sheetUrl.match(/\/d\/([^/]+)/);
-      if (!m) {
-        setError('URL de Google Sheet no válida');
-        return;
-      }
+      if (!m) { setError('URL de Google Sheet no válida'); return; }
       const sheetId = m[1];
       const gidMatch = sheetUrl.match(/gid=(\d+)/);
       const gid = gidMatch ? gidMatch[1] : '0';
       csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
     }
     fetch(csvUrl)
-      .then(res => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.text();
-      })
+      .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.text(); })
       .then(txt => {
         const parsed = parseCSV(txt);
         setClients(parsed.reverse());
@@ -219,91 +242,72 @@ export default function CrmPage() {
       .catch(err => setError(`No se pudo cargar Google Sheet: ${err.message}`));
   }
 
-  // Filtrado + Ordenado según el modo
+  // ======== Helpers ========
+  const ageFromDob = (dob) => {
+    if (!dob) return '';
+    const d = new Date(dob);
+    if (Number.isNaN(d.getTime())) return '';
+    const diff = Date.now() - d.getTime();
+    const age = new Date(diff).getUTCFullYear() - 1970;
+    return age >= 0 ? `${age}` : '';
+  };
+
+  // ======== Filtrado + Orden ========
   const filtered = useMemo(() => {
-    // 1) Primeramente ordenamos (por fecha de registro descendente si no es “google”)
-    let base = mode === 'google'
-      ? [...clients].reverse()
-      : [...clients].sort((a, b) =>
-          new Date(b.registered) - new Date(a.registered)
-        );
+    let base = [...clients].sort((a, b) => new Date(b.registered) - new Date(a.registered));
 
-    // 2) Filtrar por experiencia si se ha seleccionado algo
-    if (experienceFilter) {
-      base = base.filter(c =>
-        c.experience.toLowerCase().includes(experienceFilter.toLowerCase())
-      );
-    }
+    if (certFilter) base = base.filter(c => (c.certification || '').toLowerCase().includes(certFilter.toLowerCase()));
 
-    // 3) Si no hay término de búsqueda, devolvemos todo
     if (!searchTerm) return base;
-
-    // 4) Si hay texto en el input de búsqueda, filtramos por nombre, email, teléfono o ciudad
     const t = searchTerm.toLowerCase().trim();
-    return base.filter(c => {
-      const nameMatch  = c.name.toLowerCase().includes(t);
-      const emailMatch = c.email?.toLowerCase().includes(t);
-      const phoneMatch = String(c.phone || '').toLowerCase().includes(t);
-      const cityMatch  = c.city?.toLowerCase().includes(t);
-      return nameMatch || emailMatch || phoneMatch || cityMatch;
-    });
-  }, [clients, mode, searchTerm, experienceFilter]);
+    return base.filter(c => (
+      (c.name || '').toLowerCase().includes(t) ||
+      (c.email || '').toLowerCase().includes(t) ||
+      (String(c.phone || '')).toLowerCase().includes(t) ||
+      (c.address || '').toLowerCase().includes(t) ||
+      (c.dni || '').toLowerCase().includes(t)
+    ));
+  }, [clients, searchTerm, certFilter]);
 
-   // Auto-abre detalle si solo hay un resultado y se está buscando
+  // Auto mostrar modal si solo hay 1 resultado
   useEffect(() => {
-    if (filtered.length === 1 && searchTerm) {
-      setSelectedClient(filtered[0]);
-    }
+    if (filtered.length === 1 && searchTerm) setSelectedClient(filtered[0]);
   }, [filtered, searchTerm]);
-  // CRUD Actions
-  const startEdit = c => {
-    setEditing(c);
-    setForm(c);
-    setShowForm(true);
-  };
-  const handleAdd = e => {
+
+  // ======== CRUD ========
+  const startEdit = (c) => { setEditing(c); setForm({ ...initialForm, ...c }); setShowForm(true); };
+
+  const handleAdd = (e) => {
     e.preventDefault();
-    const nuevo = {
-      ...form,
-      id: Date.now(),
-      registered: new Date().toISOString()
-    };
+    const nuevo = { ...form, id: Date.now(), registered: new Date().toISOString() };
     setClients(c => [nuevo, ...c]);
-    setForm(initialForm);
-    setShowForm(false);
-    setSearchTerm('');
-  };
-  const handleSave = e => {
-    e.preventDefault();
-    setClients(c => c.map(cu => (cu.id === editing.id ? { ...editing, ...form } : cu)));
-    setEditing(null);
-    setForm(initialForm);
-    setShowForm(false);
-    setSearchTerm('');
-  };
-  const handleDeleteAll = () => {
-    if (confirm('¿Borrar TODOS los clientes?')) setClients([]);
-  };
-  const handleDelete = id => {
-    if (confirm('¿Borrar este cliente?')) setClients(c => c.filter(cu => cu.id !== id));
+    setForm(initialForm); setShowForm(false); setSearchTerm('');
   };
 
-  // Generar CSV y descargar (botón “Exportar Excel”)
+  const handleSave = (e) => {
+    e.preventDefault();
+    setClients(c => c.map(cu => cu.id === editing.id ? { ...editing, ...form } : cu));
+    setEditing(null); setForm(initialForm); setShowForm(false); setSearchTerm('');
+  };
+
+  const handleDeleteAll = () => { if (confirm('¿Borrar TODOS los clientes?')) setClients([]); };
+  const handleDelete = (id) => { if (confirm('¿Borrar este cliente?')) setClients(c => c.filter(cu => cu.id !== id)); };
+
+  // ======== Exportar & Emails ========
   const exportToCSV = () => {
-    const headers = ['Nombre','Ciudad','Email','Teléfono','DNI','Experiencia','Fecha Nac.','Puntos','Gastado Año'];
+    const headers = ['Nombre y Apellidos','Fecha Nacimiento','Email','Telefono','Direccion','DNI','Titulacion','Puntos',`Gastado ${currentYear}`];
     const rows = filtered.map(c => {
-      // Calcular gasto de año actual
       const gasto = (c.purchases || [])
         .filter(pu => new Date(pu.date).getFullYear() === currentYear)
-        .reduce((s, pu) => s + pu.amount, 0);
+        .reduce((s, pu) => s + (pu.amount || 0), 0);
       return [
-        c.name,
-        c.city,
-        c.email,
-        c.phone,
-        c.dni,
-        c.experience,
-        c.dob,
+        c.name || '',
+        c.dob || '',
+        c.email || '',
+        c.phone || '',
+        c.address || '',
+        c.dni || '',
+        c.certification || '',
         c.points || 0,
         gasto.toFixed(2)
       ].join(',');
@@ -312,62 +316,61 @@ export default function CrmPage() {
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = 'clientes.csv';
-    a.click();
+    a.href = url; a.download = 'clientes.csv'; a.click();
     URL.revokeObjectURL(url);
   };
 
-  // Recopilar correos por nivel de experiencia
   const generateEmailList = () => {
-    const list = filtered
-      .map(c => c.email)
-      .filter(em => em)
-      .join('; ');
+    const list = filtered.map(c => c.email).filter(Boolean).join('; ');
     setEmailList(list);
   };
 
-  // --- Para mostrar gasto anual y puntos en el formulario
-  const purchasesYear = (form.purchases || []).filter(
-    p => new Date(p.date).getFullYear() === yearFilter
-  );
-  const totalYear = purchasesYear.reduce((sum, p) => sum + p.amount, 0);
-
-  // Obtener estadísticas rápidas en encabezado
-  const totalClients = clients.length;
-  const totalVIPs = clients.filter(c => (c.tags || []).includes('VIP')).length;
-
   if (center === null) return <p>Cargando CRM...</p>;
+
+  // ======== Métricas rápidas ========
+  const totalClients = clients.length;
+  const withEmail = clients.filter(c => !!c.email).length;
+  const withPhone = clients.filter(c => !!c.phone).length;
+
+  const uniqueCerts = [...new Set(clients.map(c => c.certification).filter(Boolean))];
 
   return (
     <div style={styles.page}>
       <header style={styles.header}>
-        <h1 style={styles.logo}>TPV<span style={styles.logoD}>D</span>ive</h1>
+        <h1 style={styles.logo}>CRM <span style={styles.logoD}>Buceo</span> España</h1>
       </header>
 
       <main style={styles.main}>
         <div style={styles.topBar}>
           <Link href="/" style={styles.link}>← Panel principal</Link>
-          <button style={styles.dangerBtn} onClick={handleDeleteAll}>Borrar todos</button>
+          <div style={{display:'flex', gap:8}}>
+            <button style={styles.tabBtn} onClick={generateEmailList}>Obtener Correos</button>
+            <button style={styles.tabBtn} onClick={exportToCSV}>Exportar Excel</button>
+            <button style={styles.dangerBtn} onClick={handleDeleteAll}>Borrar todos</button>
+          </div>
         </div>
 
-        {/* ======== Encabezado con métricas pequeñas ======== */}
-        <div style={styles.smallMetrics}>
-          <div style={styles.metricCard}>
-            <small style={styles.metricLabel}>Total Clientes</small>
+        {/* Métricas */}
+        <div style={styles.metricsGrid}>
+          <div style={{...styles.metricCard, background:'#0d47a1'}}>
+            <small style={styles.metricLabel}>Total clientes</small>
             <div style={styles.metricValue}>{totalClients}</div>
           </div>
-          <div style={styles.metricCard}>
-            <small style={styles.metricLabel}>Clientes VIP</small>
-            <div style={styles.metricValue}>{totalVIPs}</div>
+          <div style={{...styles.metricCard, background:'#1565c0'}}>
+            <small style={styles.metricLabel}>Con email</small>
+            <div style={styles.metricValue}>{withEmail}</div>
+          </div>
+          <div style={{...styles.metricCard, background:'#1976d2'}}>
+            <small style={styles.metricLabel}>Con teléfono</small>
+            <div style={styles.metricValue}>{withPhone}</div>
           </div>
         </div>
 
-        {/* ======== Controles de búsqueda + modo ======== */}
+        {/* Controles */}
         <div style={styles.controls}>
           <input
             list="lst"
-            placeholder="Buscar por nombre, email, teléfono o ciudad..."
+            placeholder="Buscar por nombre, email, teléfono, dirección o DNI..."
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
             style={styles.input}
@@ -377,22 +380,13 @@ export default function CrmPage() {
           </datalist>
 
           <select
-            value={experienceFilter}
-            onChange={e => setExperienceFilter(e.target.value)}
+            value={certFilter}
+            onChange={e => setCertFilter(e.target.value)}
             style={styles.inputSmall}
           >
-            <option value="">— Filtrar nivel de experiencia —</option>
-            {[...new Set(clients.map(c => c.experience).filter(x => x))].map((exp, i) => (
-              <option key={i} value={exp}>{exp}</option>
-            ))}
+            <option value="">— Filtrar por titulación —</option>
+            {uniqueCerts.map((v, i) => <option key={i} value={v}>{v}</option>)}
           </select>
-
-          <button style={styles.tabBtn} onClick={generateEmailList}>
-            Obtener Correos
-          </button>
-          <button style={styles.tabBtn} onClick={exportToCSV}>
-            Exportar Excel
-          </button>
 
           {['manual', 'import', 'google'].map(m => (
             <button
@@ -400,9 +394,7 @@ export default function CrmPage() {
               onClick={() => { setMode(m); setError(''); setShowForm(false); }}
               style={mode === m ? styles.activeBtn : styles.tabBtn}
             >
-              {m === 'manual' ? '+ Manual'
-                : m === 'import' ? 'Importar CSV'
-                : 'Google Sheet'}
+              {m === 'manual' ? '+ Manual' : m === 'import' ? 'Importar CSV' : 'Google Sheet'}
             </button>
           ))}
         </div>
@@ -416,7 +408,7 @@ export default function CrmPage() {
           />
         )}
         {mode === 'google' && (
-          <div style={{ marginBottom: 16 }}>
+          <div style={{ marginBottom: 16, width: '100%' }}>
             <input
               type="text"
               placeholder="URL Google Sheet"
@@ -431,243 +423,150 @@ export default function CrmPage() {
         {mode === 'manual' && !showForm && (
           <button
             style={styles.primaryBtn}
-            onClick={() => {
-              setForm(initialForm);
-              setEditing(null);
-              setShowForm(true);
-            }}
+            onClick={() => { setForm(initialForm); setEditing(null); setShowForm(true); }}
           >
             + Añadir Cliente
           </button>
         )}
 
-        {/* ======== Tabla de clientes ======== */}
-        <div style={styles.tableWrapper}>
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                {[
-                  'Nombre',
-                  'Email',
-                  'Teléfono',
-                  'DNI',
-                  'Fecha Nac.',
-                  'Puntos',
-                  `Gastado ${currentYear}`,
-                  'Acciones'
-                ].map(h => <th key={h} style={styles.th}>{h}</th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(c => {
-                // Calcular gasto de año actual
-                const gasto = (c.purchases || [])
-                  .filter(pu => new Date(pu.date).getFullYear() === currentYear)
-                  .reduce((s, pu) => s + pu.amount, 0);
-
-                return (
-                  <tr key={c.id} style={styles.tr}>
-                    <td style={styles.td}>
-                      {c.name}{' '}
-                      {c.phone && (
-                        <a
-                          href={`https://wa.me/${c.phone.replace(/\D/g, '')}?text=Hola%20${encodeURIComponent(c.name)},%20te%20escribimos%20desde%20Buceo%20España`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          style={styles.whatsappBtn}
-                          title="Enviar WhatsApp"
-                        >
-                          📲
-                        </a>
+        {/* GRID de tarjetas de clientes */}
+        <div style={styles.cardsGrid}>
+          {filtered.map(c => {
+            const gasto = (c.purchases || [])
+              .filter(pu => new Date(pu.date).getFullYear() === currentYear)
+              .reduce((s, pu) => s + (pu.amount || 0), 0);
+            const age = ageFromDob(c.dob);
+            const phoneDigits = (c.phone || '').replace(/\D/g, '');
+            return (
+              <div key={c.id} style={styles.card}>
+                <div style={styles.cardHeader}>
+                  <div style={{display:'flex', alignItems:'center', gap:8}}>
+                    <div style={styles.avatar}>{(c.name || '?').slice(0,1).toUpperCase()}</div>
+                    <div>
+                      <div style={styles.cardName}>{c.name || 'Sin nombre'}</div>
+                      {c.certification && (
+                        <div style={styles.badge}>{c.certification}</div>
                       )}
-                    </td>
-                    <td style={styles.td}>{c.email}</td>
-                    <td style={styles.td}>{c.phone}</td>
-                    <td style={styles.td}>{c.dni}</td>
-                    <td style={styles.td}>{c.dob}</td>
-                    <td style={styles.td}>{c.points || 0}</td>
-                    <td style={styles.td}>{gasto.toFixed(2)}€</td>
-                      <td style={styles.td}>
-                      <button
-                        style={styles.smallBtn}
-                        onClick={() => setSelectedClient(c)}
-                      >
-                        Ver
-                      </button>{' '}
-                      <button style={styles.smallBtn} onClick={() => startEdit(c)}>Editar</button>{' '}
-                      <button style={styles.smallDangerBtn} onClick={() => handleDelete(c.id)}>Borrar</button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    </div>
+                  </div>
+                  {c.phone && (
+                    <a
+                      href={`https://wa.me/${phoneDigits}?text=${encodeURIComponent(`Hola ${c.name || ''}, te escribimos desde Buceo España`)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={styles.whatsappIcon}
+                      title="Enviar WhatsApp"
+                    >
+                      📲
+                    </a>
+                  )}
+                </div>
+
+                <div style={styles.cardBody}>
+                  <div style={styles.row}><span style={styles.label}>Email:</span><span>{c.email || '—'}</span></div>
+                  <div style={styles.row}><span style={styles.label}>Teléfono:</span><span>{c.phone || '—'}</span></div>
+                  <div style={styles.row}><span style={styles.label}>DNI:</span><span>{c.dni || '—'}</span></div>
+                  <div style={styles.row}><span style={styles.label}>Dirección:</span><span>{c.address || '—'}</span></div>
+                  <div style={styles.row}><span style={styles.label}>Fecha nac.:</span><span>{c.dob || '—'} {age && `( ${age} años )`}</span></div>
+                </div>
+
+                <div style={styles.cardFooter}>
+                  <div style={styles.kpi}><small>Puntos</small><strong>{c.points || 0}</strong></div>
+                  <div style={styles.kpi}><small>Gastado {currentYear}</small><strong>{gasto.toFixed(2)}€</strong></div>
+                </div>
+
+                <div style={styles.cardActions}>
+                  <button style={styles.smallBtn} onClick={() => setSelectedClient(c)}>Ver</button>
+                  <button style={styles.smallBtn} onClick={() => startEdit(c)}>Editar</button>
+                  <button style={styles.smallDangerBtn} onClick={() => handleDelete(c.id)}>Borrar</button>
+                </div>
+              </div>
+            );
+          })}
         </div>
 
-        {/* ======== Formulario manual / edición ======== */}
+        {/* Formulario crear/editar (solo 7 campos) */}
         {showForm && (
           <form onSubmit={editing ? handleSave : handleAdd} style={styles.form}>
             <div style={styles.formRow}>
               <div style={styles.formCol}>
-                <label style={styles.label}>Nombre completo 📝</label>
+                <label style={styles.label}>Nombre y apellidos 📝</label>
                 <input
                   required
                   value={form.name}
                   onChange={e => setForm({ ...form, name: e.target.value })}
                   style={styles.input}
                 />
-                <label style={styles.label}>Email 📧</label>
-                <input
-                  type="email"
-                  required
-                  value={form.email}
-                  onChange={e => setForm({ ...form, email: e.target.value })}
-                  style={styles.input}
-                />
-                <label style={styles.label}>Teléfono 📱</label>
-                <input
-                  type="tel"
-                  required
-                  value={form.phone}
-                  onChange={e => setForm({ ...form, phone: e.target.value })}
-                  style={styles.input}
-                />
-                <label style={styles.label}>DNI 📄</label>
-                <input
-                  value={form.dni}
-                  onChange={e => setForm({ ...form, dni: e.target.value })}
-                  style={styles.input}
-                />
-                <label style={styles.label}>Fecha de Nacimiento 🔍</label>
+
+                <label style={styles.label}>Fecha de nacimiento 🔍</label>
                 <input
                   type="date"
                   value={form.dob}
                   onChange={e => setForm({ ...form, dob: e.target.value })}
                   style={styles.input}
                 />
+
+                <label style={styles.label}>Correo electrónico 📧</label>
+                <input
+                  type="email"
+                  value={form.email}
+                  onChange={e => setForm({ ...form, email: e.target.value })}
+                  style={styles.input}
+                />
               </div>
 
               <div style={styles.formCol}>
-                <label style={styles.label}>Nivel de experiencia</label>
+                <label style={styles.label}>Teléfono 📱</label>
                 <input
-                  value={form.experience}
-                  onChange={e => setForm({ ...form, experience: e.target.value })}
+                  type="tel"
+                  value={form.phone}
+                  onChange={e => setForm({ ...form, phone: e.target.value })}
                   style={styles.input}
                 />
-                <label style={styles.label}>¿Cómo nos has conocido? 🤗</label>
-                <input
-                  value={form.referredBy}
-                  onChange={e => setForm({ ...form, referredBy: e.target.value })}
-                  style={styles.input}
-                />
-                <label style={styles.label}>Dirección completa</label>
+
+                <label style={styles.label}>Dirección completa 🏠</label>
                 <input
                   value={form.address}
                   onChange={e => setForm({ ...form, address: e.target.value })}
                   style={styles.input}
                 />
-                <label style={styles.label}>Código Postal</label>
+
+                <label style={styles.label}>DNI / NIE 📄</label>
                 <input
-                  value={form.postal}
-                  onChange={e => setForm({ ...form, postal: e.target.value })}
+                  value={form.dni}
+                  onChange={e => setForm({ ...form, dni: e.target.value.toUpperCase() })}
                   style={styles.input}
                 />
               </div>
 
               <div style={styles.formCol}>
-                <label style={styles.label}>Intereses especiales</label>
-                <select
-                  multiple
-                  value={form.interests}
-                  onChange={e => setForm({
-                    ...form,
-                    interests: [...e.target.selectedOptions].map(o => o.value)
-                  })}
-                  style={styles.selectMulti}
-                >
-                  <option>Fotografía submarina</option>
-                  <option>Cueva</option>
-                  <option>Mantarrayas</option>
-                  <option>Arrecifes</option>
-                </select>
-
-                <label style={styles.label}>Palabras clave</label>
-                <select
-                  multiple
-                  value={form.keywords}
-                  onChange={e => setForm({
-                    ...form,
-                    keywords: [...e.target.selectedOptions].map(o => o.value)
-                  })}
-                  style={styles.selectMulti}
-                >
-                  <option>Aventura</option>
-                  <option>Relajación</option>
-                  <option>Aprendizaje</option>
-                </select>
-
-                <label style={styles.label}>Comentarios adicionales 💡</label>
-                <textarea
-                  value={form.comments}
-                  onChange={e => setForm({ ...form, comments: e.target.value })}
-                  style={styles.textarea}
+                <label style={styles.label}>Titulación de buceo 🎓</label>
+                <input
+                  value={form.certification}
+                  onChange={e => setForm({ ...form, certification: e.target.value })}
+                  style={styles.input}
                 />
+
+                {/* KPIs solo lectura para no perder funcionalidad */}
+                <div style={{ marginTop: 16, padding: 12, background:'#f7faff', border:'1px solid #e2ecff', borderRadius:8 }}>
+                  <div style={{fontWeight:600, marginBottom:8}}>Resumen</div>
+                  <div style={{display:'flex', gap:16}}>
+                    <div style={styles.kpi}><small>Puntos</small><strong>{form.points || 0}</strong></div>
+                    {/* Gastos del año actual si existieran compras */}
+                    <div style={styles.kpi}>
+                      <small>Gastado {currentYear}</small>
+                      <strong>{((form.purchases || []).filter(p => new Date(p.date).getFullYear() === currentYear).reduce((s,p) => s + (p.amount || 0), 0)).toFixed(2)}€</strong>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
-            {/* — Nuevos — sección de Compras filtradas por año — */}
-            <div style={{ marginTop: 24 }}>
-              <h3>
-                Compras de {yearFilter}{' '}
-                <button
-                  type="button"
-                  onClick={() => setYearFilter(y => Math.max(y - 1, 2000))}
-                  style={styles.smallBtn}
-                >
-                  &lt;
-                </button>{' '}
-                <button
-                  type="button"
-                  onClick={() => setYearFilter(y => Math.min(y + 1, currentYear))}
-                  style={styles.smallBtn}
-                >
-                  &gt;
-                </button>
-              </h3>
-              <ul>
-                {purchasesYear.map((p, i) => (
-                  <li key={i}>
-                    {p.date.slice(0, 10)} – {p.product}: {p.amount.toFixed(2)}€
-                  </li>
-                ))}
-              </ul>
-              <p>
-                <strong>Total en {yearFilter}:</strong> {totalYear.toFixed(2)}€
-              </p>
-            </div>
-
-            {/* — Nuevo — mostrar puntos actuales — */}
-            <div style={{ marginTop: 24 }}>
-              <h3>Puntos acumulados: {form.points || 0}</h3>
-              {form.points >= 100 && (
-                <p style={{ color: '#0070f3', fontWeight: 600 }}>
-                  🎉 ¡Este cliente puede canjear 100 puntos por 10% de descuento!
-                </p>
-              )}
-            </div>
-
             <div style={styles.formActions}>
-              <button type="submit" style={styles.primaryBtn}>
-                {editing ? 'Guardar' : 'Añadir Cliente'}
-              </button>
+              <button type="submit" style={styles.primaryBtn}>{editing ? 'Guardar' : 'Añadir Cliente'}</button>
               <button
                 type="button"
-                onClick={() => {
-                  setShowForm(false);
-                  setEditing(null);
-                  setForm(initialForm);
-                  setSearchTerm('');
-                }}
+                onClick={() => { setShowForm(false); setEditing(null); setForm(initialForm); setSearchTerm(''); }}
                 style={styles.smallDangerBtn}
               >
                 Cancelar
@@ -677,50 +576,40 @@ export default function CrmPage() {
         )}
       </main>
 
-      {/* ======== Vista de correos recopilados ======== */}
+      {/* Modal con lista de correos */}
       {emailList && (
-        <div style={styles.emailModalOverlay}>␊
-          <div style={styles.emailModalContent}>␊
-            <h2>Lista de Correos</h2>␊
-            <textarea
-              readOnly
-              value={emailList}
-              style={styles.emailListBox}
-            />
-            <button
-              onClick={() => setEmailList('')}
-              style={styles.modalCloseBtn}
-            >
-              Cerrar
-            </button>
+        <div style={styles.emailModalOverlay}>
+          <div style={styles.emailModalContent}>
+            <h2>Lista de Correos</h2>
+            <textarea readOnly value={emailList} style={styles.emailListBox} />
+            <button onClick={() => setEmailList('')} style={styles.modalCloseBtn}>Cerrar</button>
           </div>
         </div>
       )}
 
-       {/* ======== Ventana emergente con datos básicos ======== */}
+      {/* Modal ver cliente */}
       {selectedClient && (
         <div style={styles.emailModalOverlay}>
           <div style={styles.emailModalContent}>
             <h2>{selectedClient.name}</h2>
-            <p><strong>Email:</strong> {selectedClient.email}</p>
-            <p><strong>Teléfono:</strong> {selectedClient.phone}</p>
-            <p><strong>Ciudad:</strong> {selectedClient.city}</p>
-            <p><strong>Fecha Nac.:</strong> {selectedClient.dob}</p>
-            <p><strong>Puntos:</strong> {selectedClient.points || 0}</p>
+            <p><strong>Email:</strong> {selectedClient.email || '—'}</p>
+            <p><strong>Teléfono:</strong> {selectedClient.phone || '—'}</p>
+            <p><strong>DNI:</strong> {selectedClient.dni || '—'}</p>
+            <p><strong>Dirección:</strong> {selectedClient.address || '—'}</p>
+            <p><strong>Fecha Nac.:</strong> {selectedClient.dob || '—'}</p>
+            <p><strong>Titulación:</strong> {selectedClient.certification || '—'}</p>
             <p>
               <strong>Gastado {currentYear}:</strong>{' '}
               {(
                 (selectedClient.purchases || [])
                   .filter(pu => new Date(pu.date).getFullYear() === currentYear)
-                  .reduce((s, pu) => s + pu.amount, 0)
+                  .reduce((s, pu) => s + (pu.amount || 0), 0)
               ).toFixed(2)}€
             </p>
-            <button
-              onClick={() => { setSelectedClient(null); setSearchTerm(''); }}
-              style={styles.modalCloseBtn}
-            >
-              Cerrar
-            </button>
+            <p><strong>Puntos:</strong> {selectedClient.points || 0}</p>
+            <div style={{marginTop:12, textAlign:'right'}}>
+              <button onClick={() => { setSelectedClient(null); setSearchTerm(''); }} style={styles.modalCloseBtn}>Cerrar</button>
+            </div>
           </div>
         </div>
       )}
@@ -728,241 +617,57 @@ export default function CrmPage() {
   );
 }
 
-// ====== Estilos en línea actualizados ======
+// ===================== ESTILOS =====================
 const styles = {
-  page: {
-    backgroundColor: '#f2f6fc',
-    minHeight: '100vh',
-    padding: 0           // <— quitar padding a los laterales
-  },
-  header: {
-    background: '#fff',
-    padding: '12px 24px',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-    marginBottom: '16px',
-    borderRadius: '4px'
-  },
-  logo: {
-    margin: 0,
-    fontFamily: 'Georgia, serif',
-    fontSize: 24,
-    color: '#222'
-  },
-  logoD: { color: 'red' },
+  page: { backgroundColor: '#f2f6fc', minHeight: '100vh' },
+  header: { background:'#fff', padding:'12px 24px', boxShadow:'0 2px 4px rgba(0,0,0,0.1)', marginBottom:16 },
+  logo: { margin:0, fontFamily:'system-ui, -apple-system, Segoe UI, Roboto', fontSize:22, color:'#222' },
+  logoD: { color: '#e53935', fontWeight:700 },
+  main: { width:'100%', maxWidth:1200, margin:'0 auto', background:'#fff', borderRadius:12, boxShadow:'0 6px 20px rgba(0,0,0,0.06)', padding:24, minHeight:'80vh' },
+  topBar: { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, flexWrap:'wrap', gap:8 },
+  link: { textDecoration:'none', color:'#0070f3', fontWeight:500 },
+  dangerBtn: { background:'#d9534f', color:'#fff', border:'none', padding:'6px 12px', borderRadius:6, cursor:'pointer' },
 
- main: {
-    width: '100vw',       // Ocupa TODO el ancho de la ventana
-    maxWidth: '100vw',    // Nos aseguramos de que no se limite a 960px
-    margin: 0,            // Sin márgenes
-    background: '#fff',
-    borderRadius: 8,      // Puedes quitarlo (0) si quieres bordes cuadrados
-    boxShadow: '0 4px 8px rgba(0,0,0,0.1)',
-    padding: 24,          // Padding interior para no quedar pegado al borde
-    minHeight: '80vh'
-  },
-  topBar: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16
-  },
-  link: {
-    textDecoration: 'none',
-    color: '#0070f3',
-    fontWeight: 500
-  },
-  dangerBtn: {
-    background: '#d9534f',
-    color: '#fff',
-    border: 'none',
-    padding: '6px 12px',
-    borderRadius: 4,
-    cursor: 'pointer'
-  },
+  metricsGrid: { display:'grid', gridTemplateColumns:'repeat(3, minmax(0,1fr))', gap:12, marginBottom:20 },
+  metricCard: { color:'#fff', padding:16, borderRadius:10, textAlign:'center', boxShadow:'0 4px 12px rgba(0,0,0,0.08)' },
+  metricLabel: { opacity:0.9, fontSize:13 },
+  metricValue: { fontSize:24, marginTop:4, fontWeight:700 },
 
-  /* Pequeñas métricas */
-  smallMetrics: {
-    display: 'flex',
-    gap: '12px',
-    marginBottom: '24px'
-  },
-  metricCard: {
-    flex: '1 1 200px',
-    background: '#0d47a1',
-    color: '#fff',
-    padding: '16px',
-    borderRadius: '8px',
-    textAlign: 'center'
-  },
-  metricLabel: { opacity: 0.8, fontSize: '14px' },
-  metricValue: { fontSize: '24px', marginTop: '4px' },
-
-  /* Controles de búsqueda y modo */
-  controls: {
-    display: 'flex',
-    gap: 8,
-    alignItems: 'center',
-    marginBottom: 16,
-    flexWrap: 'wrap'
-  },
-  input: {
-    padding: 8,
-    borderRadius: 4,
-    border: '1px solid #ccc',
-    flex: '1 1 200px',
-    fontSize: 14
-  },
-  inputSmall: {
-    padding: 8,
-    borderRadius: 4,
-    border: '1px solid #ccc',
-    flex: '0 1 180px',
-    fontSize: 14
-  },
-  tabBtn: {
-    background: '#e0f0ff',
-    border: 'none',
-    padding: '6px 12px',
-    borderRadius: 4,
-    cursor: 'pointer'
-  },
-  activeBtn: {
-    background: '#0070f3',
-    color: '#fff',
-    border: 'none',
-    padding: '6px 12px',
-    borderRadius: 4,
-    cursor: 'pointer'
-  },
-  fileInput: { marginBottom: 16 },
+  controls: { display:'flex', gap:8, alignItems:'center', marginBottom:16, flexWrap:'wrap' },
+  input: { padding:10, borderRadius:8, border:'1px solid #d5dbe7', flex:'1 1 260px', fontSize:14 },
+  inputSmall: { padding:10, borderRadius:8, border:'1px solid #d5dbe7', flex:'0 1 220px', fontSize:14 },
+  tabBtn: { background:'#e7f2ff', border:'none', padding:'8px 14px', borderRadius:8, cursor:'pointer' },
+  activeBtn: { background:'#0070f3', color:'#fff', border:'none', padding:'8px 14px', borderRadius:8, cursor:'pointer' },
+  fileInput: { marginBottom:16 },
   error: { color: 'red', marginTop: 4 },
+  primaryBtn: { background:'#0070f3', color:'#fff', border:'none', padding:'10px 16px', borderRadius:10, cursor:'pointer', marginBottom:16 },
 
-  /* Botón principal en modo manual */
-  primaryBtn: {
-    background: '#0070f3',
-    color: '#fff',
-    border: 'none',
-    padding: '8px 16px',
-    borderRadius: 4,
-    cursor: 'pointer',
-    marginBottom: '16px'
-  },
+  // GRID de tarjetas
+  cardsGrid: { display:'grid', gridTemplateColumns:'repeat( auto-fill, minmax(280px, 1fr) )', gap:16 },
+  card: { background:'#ffffff', border:'1px solid #e9edf5', borderRadius:12, overflow:'hidden', display:'flex', flexDirection:'column', boxShadow:'0 2px 10px rgba(0,0,0,0.04)' },
+  cardHeader: { display:'flex', alignItems:'center', justifyContent:'space-between', padding:16, borderBottom:'1px solid #f0f3fa' },
+  avatar: { width:40, height:40, borderRadius:999, background:'#e3f2fd', color:'#0d47a1', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700 },
+  cardName: { fontWeight:700 },
+  badge: { display:'inline-block', marginTop:4, fontSize:12, background:'#e3f2fd', color:'#0d47a1', padding:'2px 8px', borderRadius:999 },
+  whatsappIcon: { fontSize:22, textDecoration:'none' },
+  cardBody: { padding:16, display:'grid', gap:6 },
+  row: { display:'flex', justifyContent:'space-between', gap:8, fontSize:14 },
+  label: { color:'#57607a', fontWeight:500 },
+  cardFooter: { display:'flex', gap:16, padding:'12px 16px', borderTop:'1px solid #f0f3fa', background:'#fafcff' },
+  kpi: { display:'flex', flexDirection:'column', gap:2 },
+  cardActions: { display:'flex', gap:8, padding:12, justifyContent:'flex-end' },
 
-  /* Tabla de clientes */
-   tableWrapper: {
-    maxHeight: '70vh',
-    overflowY: 'auto',
-    border: '1px solid #ddd',
-    borderRadius: 4,
-    marginBottom: 16
-  },
-  table: { width: '100%', borderCollapse: 'collapse' },
-  th: {
-    position: 'sticky',
-    top: 0,
-    background: '#f5f5f5',
-    borderBottom: '2px solid #ddd',
-    padding: 8,
-    textAlign: 'left'
-  },
-  tr: { background: '#fff' },
-  td: { borderBottom: '1px solid #eee', padding: 8 },
-  smallBtn: {
-    background: '#28a745',
-    color: '#fff',
-    border: 'none',
-    padding: '4px 8px',
-    borderRadius: 4,
-    cursor: 'pointer',
-    fontSize: 12,
-    marginRight: '4px'
-  },
-  smallDangerBtn: {
-    background: '#dc3545',
-    color: '#fff',
-    border: 'none',
-    padding: '4px 8px',
-    borderRadius: 4,
-    cursor: 'pointer',
-    fontSize: 12
-  },
-  whatsappBtn: {
-    marginLeft: '6px',
-    fontSize: '18px',
-    textDecoration: 'none'
-  },
+  // Formulario
+  form: { border:'1px solid #e9edf5', borderRadius:12, padding:16, marginTop:16 },
+  formRow: { display:'flex', gap:16, flexWrap:'wrap' },
+  formCol: { flex:'1 1 320px', minWidth:260 },
+  formActions: { marginTop: 16, textAlign: 'right' },
+  smallBtn: { background:'#28a745', color:'#fff', border:'none', padding:'6px 10px', borderRadius:8, cursor:'pointer', fontSize:12 },
+  smallDangerBtn: { background:'#dc3545', color:'#fff', border:'none', padding:'6px 10px', borderRadius:8, cursor:'pointer', fontSize:12 },
 
-  /* Formulario manual / edición */
-  form: {
-    border: '1px solid #ddd',
-    borderRadius: 4,
-    padding: 16,
-    marginTop: 16,
-    overflowX: 'auto'
-  },
-  formRow: { display: 'flex', gap: 16, flexWrap: 'wrap' },
-  formCol: { flex: '1 1 300px', minWidth: '250px' },
-  label: { display: 'block', marginBottom: 4, fontWeight: 500 },
-  textarea: {
-    width: '100%',
-    padding: 8,
-    borderRadius: 4,
-    border: '1px solid #ccc',
-    fontSize: 14,
-    resize: 'vertical'
-  },
-  selectMulti: {
-    width: '100%',
-    height: 80,
-    padding: 8,
-    border: '1px solid #ccc',
-    borderRadius: 4,
-    fontSize: 14,
-    marginBottom: '12px'
-  },
-  formActions: {
-    marginTop: 16,
-    textAlign: 'right'
-  },
-
-  /* Modal de lista de correos */
-  emailModalOverlay: {
-    position: 'fixed',
-    left: 0,
-    top: 0,
-    width: '100vw',
-    height: '100vh',
-    background: 'rgba(0,0,0,0.3)',
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 3000
-  },
-  emailModalContent: {
-    background: '#fff',
-    borderRadius: 8,
-    padding: 24,
-    width: '90%',
-    maxWidth: 600,
-    boxShadow: '0 6px 32px rgba(0,0,0,0.1)'
-  },
-  emailListBox: {
-    width: '100%',
-    height: 200,
-    padding: 8,
-    fontSize: 14,
-    borderRadius: 4,
-    border: '1px solid #ccc',
-    marginBottom: 16,
-    resize: 'none'
-  },
-  modalCloseBtn: {
-    background: '#0070f3',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 4,
-    padding: '8px 16px',
-    fontSize: 14,
-    cursor: 'pointer'
-  }
+  // Modal
+  emailModalOverlay: { position:'fixed', left:0, top:0, width:'100vw', height:'100vh', background:'rgba(0,0,0,0.3)', display:'flex', justifyContent:'center', alignItems:'center', zIndex:3000 },
+  emailModalContent: { background:'#fff', borderRadius:12, padding:24, width:'90%', maxWidth:640, boxShadow:'0 16px 48px rgba(0,0,0,0.2)' },
+  emailListBox: { width:'100%', height:200, padding:8, fontSize:14, borderRadius:8, border:'1px solid #d5dbe7', marginBottom:16, resize:'none' },
+  modalCloseBtn: { background:'#0070f3', color:'#fff', border:'none', borderRadius:10, padding:'10px 16px', fontSize:14, cursor:'pointer' },
 };
