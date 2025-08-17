@@ -2,13 +2,14 @@ import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 
 // =============================================================
-// CRM SUPREMO — Vista moderna + búsqueda/filtrado potentes
-// - Solo 7 campos por cliente: name, dob, email, phone, address, dni, certification
-// - Import CSV / Google Sheet (delimitador auto), export CSV, lista de emails
+// CRM SUPREMO + QR REGISTRO
+// - 7 campos por cliente: name, dob, email, phone, address, dni, certification
+// - Import CSV / Google Sheet / Export CSV / Lista emails
 // - Grid de tarjetas + Modal "Ver" con EDICIÓN inline
 // - Filtro por Titulación + búsqueda dentro del filtro
-// - Migración suave desde datos antiguos (si existen)
-// - Mantiene meta: id, registered, purchases, points (solo lectura)
+// - Modal para AÑADIR cliente (limpio y guiado)
+// - Botón QR de REGISTRO ONLINE (descargable + copiar link)
+// - Sin dependencias nuevas: QR generado por servicio de imagen (CORS OK)
 // =============================================================
 
 // =================== CSV PARSER ===============================
@@ -119,9 +120,13 @@ function parseCSV(csvText) {
 
 export default function CrmPage() {
   const [center, setCenter] = useState(null);
+  const [origin, setOrigin] = useState('');
 
   useEffect(() => {
-    if (typeof window !== 'undefined') setCenter(localStorage.getItem('active_center'));
+    if (typeof window !== 'undefined') {
+      setCenter(localStorage.getItem('active_center'));
+      setOrigin(window.location.origin);
+    }
   }, []);
 
   const STORAGE_KEY = center ? `dive_manager_clients_${center}` : null;
@@ -141,6 +146,12 @@ export default function CrmPage() {
   const [selectedForm, setSelectedForm] = useState(null);
   const [certFilter, setCertFilter] = useState('');
   const [validationErr, setValidationErr] = useState('');
+
+  // QR modal state
+  const [showQR, setShowQR] = useState(false);
+  const [qrLink, setQrLink] = useState('');
+  const [qrImgUrl, setQrImgUrl] = useState('');
+  const [qrBlobUrl, setQrBlobUrl] = useState('');
 
   // Persistir sheetUrl
   useEffect(() => { if (typeof window !== 'undefined') localStorage.setItem('sheetUrl', sheetUrl); }, [sheetUrl]);
@@ -233,6 +244,30 @@ export default function CrmPage() {
     return parts.map((p, i) => p.toLowerCase() === query.toLowerCase() ? <mark key={i}>{p}</mark> : <span key={i}>{p}</span>);
   };
 
+  const buildRegistrationLink = () => {
+    const base = process.env.NEXT_PUBLIC_REG_URL || `${origin}/registro`;
+    const params = new URLSearchParams();
+    if (center) params.set('center', center);
+    params.set('source', 'crm');
+    return `${base}?${params.toString()}`;
+  };
+
+  const openQR = async () => {
+    const link = buildRegistrationLink();
+    setQrLink(link);
+    const img = `https://quickchart.io/qr?text=${encodeURIComponent(link)}&margin=2&size=600`;
+    setQrImgUrl(img);
+    try {
+      const res = await fetch(img);
+      const blob = await res.blob();
+      const objURL = URL.createObjectURL(blob);
+      setQrBlobUrl(objURL);
+    } catch (e) {
+      setQrBlobUrl('');
+    }
+    setShowQR(true);
+  };
+
   // ======== Filtrado + Orden ========
   const filtered = useMemo(() => {
     let base = [...clients].sort((a, b) => new Date(b.registered) - new Date(a.registered));
@@ -260,14 +295,16 @@ export default function CrmPage() {
 
   const handleAdd = (e) => {
     e.preventDefault();
+    const msg = validateClient(form); if (msg) { setValidationErr(msg); return; }
     const nuevo = { ...form, id: Date.now(), registered: new Date().toISOString() };
-    setClients(c => [nuevo, ...c]); setForm(initialForm); setShowForm(false); setSearchTerm('');
+    setClients(c => [nuevo, ...c]); setForm(initialForm); setShowForm(false); setSearchTerm(''); setValidationErr('');
   };
 
   const handleSave = (e) => {
     e.preventDefault();
+    const msg = validateClient(form); if (msg) { setValidationErr(msg); return; }
     setClients(c => c.map(cu => cu.id === editing.id ? { ...editing, ...form } : cu));
-    setEditing(null); setForm(initialForm); setShowForm(false); setSearchTerm('');
+    setEditing(null); setForm(initialForm); setShowForm(false); setSearchTerm(''); setValidationErr('');
   };
 
   const handleDeleteAll = () => { if (confirm('¿Borrar TODOS los clientes?')) setClients([]); };
@@ -314,7 +351,8 @@ export default function CrmPage() {
       <main style={styles.main}>
         <div style={styles.topBar}>
           <Link href="/" style={styles.link}>← Panel principal</Link>
-          <div style={{display:'flex', gap:8}}>
+          <div style={{display:'flex', gap:8, flexWrap:'wrap'}}>
+            <button style={styles.secondaryBtn} onClick={openQR}>QR Registro</button>
             <button style={styles.tabBtn} onClick={generateEmailList}>Obtener Correos</button>
             <button style={styles.tabBtn} onClick={exportToCSV}>Exportar Excel</button>
             <button style={styles.dangerBtn} onClick={handleDeleteAll}>Borrar todos</button>
@@ -384,7 +422,7 @@ export default function CrmPage() {
           </div>
         )}
 
-        {mode === 'manual' && !showForm && (
+        {mode === 'manual' && (
           <button style={styles.primaryBtn} onClick={() => { setForm(initialForm); setEditing(null); setShowForm(true); }}>+ Añadir Cliente</button>
         )}
 
@@ -418,11 +456,11 @@ export default function CrmPage() {
                 </div>
 
                 <div style={styles.cardBody}>
-                  <div style={styles.row}><span style={styles.label}>Email:</span><span>{highlight(c.email || '—', searchTerm)}</span></div>
-                  <div style={styles.row}><span style={styles.label}>Teléfono:</span><span>{highlight(c.phone || '—', searchTerm)}</span></div>
-                  <div style={styles.row}><span style={styles.label}>DNI:</span><span>{highlight(c.dni || '—', searchTerm)}</span></div>
-                  <div style={styles.row}><span style={styles.label}>Dirección:</span><span>{highlight(c.address || '—', searchTerm)}</span></div>
-                  <div style={styles.row}><span style={styles.label}>Fecha nac.:</span><span>{c.dob || '—'} {age && `( ${age} años )`}</span></div>
+                  <div style={styles.row}><span style={styles.label}>Email</span><span>{highlight(c.email || '—', searchTerm)}</span></div>
+                  <div style={styles.row}><span style={styles.label}>Teléfono</span><span>{highlight(c.phone || '—', searchTerm)}</span></div>
+                  <div style={styles.row}><span style={styles.label}>DNI</span><span>{highlight(c.dni || '—', searchTerm)}</span></div>
+                  <div style={styles.row}><span style={styles.label}>Dirección</span><span>{highlight(c.address || '—', searchTerm)}</span></div>
+                  <div style={styles.row}><span style={styles.label}>Fecha nac.</span><span>{c.dob || '—'} {age && `( ${age} años )`}</span></div>
                 </div>
 
                 <div style={styles.cardFooter}>
@@ -439,59 +477,70 @@ export default function CrmPage() {
             );
           })}
         </div>
+      </main>
 
-        {/* Formulario crear/editar (solo 7 campos) */}
-        {showForm && (
-          <form onSubmit={editing ? handleSave : handleAdd} style={styles.form}>
-            <div style={styles.formRow}>
-              <div style={styles.formCol}>
-                <label style={styles.label}>Nombre y apellidos 📝</label>
-                <input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} style={styles.input} />
+      {/* Modal AÑADIR / EDITAR (formulario limpio) */}
+      {showForm && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalContent}>
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12}}>
+              <h2 style={{margin:0}}>{editing ? 'Editar cliente' : 'Añadir nuevo cliente'}</h2>
+              <button onClick={() => { setShowForm(false); setEditing(null); setForm(initialForm); setValidationErr(''); }} style={styles.modalCloseBtn}>Cerrar</button>
+            </div>
+            <p style={{marginTop:0, color:'#556'}}>Rellena los datos principales del buceador. Podrás completarlos más tarde desde su ficha.</p>
+            <form onSubmit={editing ? handleSave : handleAdd}>
+              <div style={styles.formRow}>
+                <div style={styles.formCol}>
+                  <label style={styles.label}>Nombre y apellidos</label>
+                  <input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Ej: Ana Pérez Gómez" style={styles.input} />
 
-                <label style={styles.label}>Fecha de nacimiento 🔍</label>
-                <input type="date" value={form.dob} onChange={e => setForm({ ...form, dob: e.target.value })} style={styles.input} />
+                  <label style={styles.label}>Fecha de nacimiento</label>
+                  <input type="date" value={form.dob} onChange={e => setForm({ ...form, dob: e.target.value })} style={styles.input} />
 
-                <label style={styles.label}>Correo electrónico 📧</label>
-                <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} style={styles.input} />
-              </div>
+                  <label style={styles.label}>Correo electrónico</label>
+                  <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="correo@ejemplo.com" style={styles.input} />
+                </div>
 
-              <div style={styles.formCol}>
-                <label style={styles.label}>Teléfono 📱</label>
-                <input type="tel" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} style={styles.input} />
+                <div style={styles.formCol}>
+                  <label style={styles.label}>Teléfono</label>
+                  <input type="tel" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder="+34 612 345 678" style={styles.input} />
 
-                <label style={styles.label}>Dirección completa 🏠</label>
-                <input value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} style={styles.input} />
+                  <label style={styles.label}>Dirección completa</label>
+                  <input value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} placeholder="Calle, número, ciudad, país" style={styles.input} />
 
-                <label style={styles.label}>DNI / NIE 📄</label>
-                <input value={form.dni} onChange={e => setForm({ ...form, dni: e.target.value.toUpperCase() })} style={styles.input} />
-              </div>
+                  <label style={styles.label}>DNI / NIE</label>
+                  <input value={form.dni} onChange={e => setForm({ ...form, dni: e.target.value.toUpperCase() })} placeholder="00000000X" style={styles.input} />
+                </div>
 
-              <div style={styles.formCol}>
-                <label style={styles.label}>Titulación de buceo 🎓</label>
-                <input value={form.certification} onChange={e => setForm({ ...form, certification: e.target.value })} style={styles.input} />
+                <div style={styles.formCol}>
+                  <label style={styles.label}>Titulación de buceo</label>
+                  <input value={form.certification} onChange={e => setForm({ ...form, certification: e.target.value })} placeholder="Open Water / Advanced /..." style={styles.input} />
 
-                <div style={{ marginTop: 16, padding: 12, background:'#f7faff', border:'1px solid #e2ecff', borderRadius:8 }}>
-                  <div style={{fontWeight:600, marginBottom:8}}>Resumen</div>
-                  <div style={{display:'flex', gap:16}}>
-                    <div style={styles.kpi}><small>Puntos</small><strong>{form.points || 0}</strong></div>
-                    <div style={styles.kpi}><small>Gastado {currentYear}</small><strong>{((form.purchases || []).filter(p => new Date(p.date).getFullYear() === currentYear).reduce((s,p) => s + (p.amount || 0), 0)).toFixed(2)}€</strong></div>
+                  <div style={{ marginTop: 16, padding: 12, background:'#f7faff', border:'1px solid #e2ecff', borderRadius:8 }}>
+                    <div style={{fontWeight:600, marginBottom:8}}>Resumen</div>
+                    <div style={{display:'flex', gap:16}}>
+                      <div style={styles.kpi}><small>Puntos</small><strong>{form.points || 0}</strong></div>
+                      <div style={styles.kpi}><small>Gastado {currentYear}</small><strong>{((form.purchases || []).filter(p => new Date(p.date).getFullYear() === currentYear).reduce((s,p) => s + (p.amount || 0), 0)).toFixed(2)}€</strong></div>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
 
-            <div style={styles.formActions}>
-              <button type="submit" style={styles.primaryBtn}>{editing ? 'Guardar' : 'Añadir Cliente'}</button>
-              <button type="button" onClick={() => { setShowForm(false); setEditing(null); setForm(initialForm); setSearchTerm(''); }} style={styles.smallDangerBtn}>Cancelar</button>
-            </div>
-          </form>
-        )}
-      </main>
+              {validationErr && <p style={{color:'#d9534f', marginTop:8}}>{validationErr}</p>}
+
+              <div style={{marginTop:12, textAlign:'right'}}>
+                <button type="button" onClick={() => { setShowForm(false); setEditing(null); setForm(initialForm); setValidationErr(''); }} style={{...styles.smallDangerBtn, marginRight:8}}>Cancelar</button>
+                <button type="submit" style={styles.primaryBtn}>{editing ? 'Guardar cambios' : 'Añadir Cliente'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Modal con lista de correos */}
       {emailList && (
-        <div style={styles.emailModalOverlay}>
-          <div style={styles.emailModalContent}>
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalContent}>
             <h2>Lista de Correos</h2>
             <textarea readOnly value={emailList} style={styles.emailListBox} />
             <button onClick={() => setEmailList('')} style={styles.modalCloseBtn}>Cerrar</button>
@@ -501,8 +550,8 @@ export default function CrmPage() {
 
       {/* Modal ver/editar cliente seleccionado */}
       {selectedClient && (
-        <div style={styles.emailModalOverlay}>
-          <div style={styles.emailModalContent}>
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalContent}>
             <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12}}>
               <h2 style={{margin:0}}>{selectedEdit ? 'Editar cliente' : selectedClient.name}</h2>
               <div style={{display:'flex', gap:8}}>
@@ -580,43 +629,69 @@ export default function CrmPage() {
           </div>
         </div>
       )}
+
+      {/* Modal QR REGISTRO */}
+      {showQR && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalContent}>
+            <h2 style={{marginTop:0}}>Registro online</h2>
+            <p style={{marginTop:0, color:'#556'}}>Escanea para completar el formulario de registro. También puedes descargar el QR para imprimirlo y ponerlo en recepción.</p>
+            <div style={{display:'flex', flexDirection:'column', alignItems:'center', gap:12}}>
+              {qrImgUrl ? (
+                <img src={qrImgUrl} alt="QR de registro" style={{width:260, height:260}} />
+              ) : (
+                <div style={{width:260, height:260, display:'grid', placeItems:'center', background:'#f3f6ff', border:'1px dashed #cbd5e1'}}>Generando QR…</div>
+              )}
+              <small style={{wordBreak:'break-all', color:'#334155'}}>{qrLink}</small>
+            </div>
+            <div style={{marginTop:16, display:'flex', gap:8, justifyContent:'flex-end'}}>
+              <button onClick={() => { navigator.clipboard?.writeText(qrLink); }} style={styles.secondaryBtn}>Copiar enlace</button>
+              {qrBlobUrl ? (
+                <a href={qrBlobUrl} download={`qr-registro-${center || 'centro'}.png`} style={{...styles.primaryBtn, textDecoration:'none', display:'inline-block'}}>Descargar PNG</a>
+              ) : null}
+              <button onClick={() => setShowQR(false)} style={styles.modalCloseBtn}>Cerrar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // ===================== ESTILOS =====================
 const styles = {
-  page: { backgroundColor: '#f2f6fc', minHeight: '100vh' },
-  header: { background:'#fff', padding:'12px 24px', boxShadow:'0 2px 4px rgba(0,0,0,0.1)', marginBottom:16 },
+  page: { backgroundColor: '#eef3fb', minHeight: '100vh' },
+  header: { background:'#fff', padding:'12px 24px', boxShadow:'0 2px 4px rgba(0,0,0,0.08)', marginBottom:16 },
   logo: { margin:0, fontFamily:'system-ui, -apple-system, Segoe UI, Roboto', fontSize:22, color:'#222' },
   logoD: { color: '#e53935', fontWeight:700 },
-  main: { width:'100%', maxWidth:1200, margin:'0 auto', background:'#fff', borderRadius:12, boxShadow:'0 6px 20px rgba(0,0,0,0.06)', padding:24, minHeight:'80vh' },
+  main: { width:'100%', maxWidth:1200, margin:'0 auto', background:'#fff', borderRadius:14, boxShadow:'0 10px 24px rgba(0,0,0,0.06)', padding:24, minHeight:'80vh' },
   topBar: { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, flexWrap:'wrap', gap:8 },
   link: { textDecoration:'none', color:'#0070f3', fontWeight:500 },
-  dangerBtn: { background:'#d9534f', color:'#fff', border:'none', padding:'6px 12px', borderRadius:6, cursor:'pointer' },
+  dangerBtn: { background:'#d9534f', color:'#fff', border:'none', padding:'8px 12px', borderRadius:10, cursor:'pointer' },
+  secondaryBtn: { background:'#f1f5ff', color:'#0b6bcb', border:'1px solid #cfe1ff', padding:'8px 12px', borderRadius:10, cursor:'pointer' },
 
   metricsGrid: { display:'grid', gridTemplateColumns:'repeat(3, minmax(0,1fr))', gap:12, marginBottom:20 },
-  metricCard: { color:'#fff', padding:16, borderRadius:10, textAlign:'center', boxShadow:'0 4px 12px rgba(0,0,0,0.08)' },
+  metricCard: { color:'#fff', padding:16, borderRadius:12, textAlign:'center', boxShadow:'0 4px 12px rgba(0,0,0,0.08)' },
   metricLabel: { opacity:0.9, fontSize:13 },
   metricValue: { fontSize:24, marginTop:4, fontWeight:700 },
 
   controls: { display:'flex', gap:8, alignItems:'center', marginBottom:16, flexWrap:'wrap' },
-  input: { padding:10, borderRadius:8, border:'1px solid #d5dbe7', flex:'1 1 260px', fontSize:14 },
-  inputSmall: { padding:10, borderRadius:8, border:'1px solid #d5dbe7', flex:'0 1 220px', fontSize:14 },
-  tabBtn: { background:'#e7f2ff', border:'none', padding:'8px 14px', borderRadius:8, cursor:'pointer' },
-  activeBtn: { background:'#0070f3', color:'#fff', border:'none', padding:'8px 14px', borderRadius:8, cursor:'pointer' },
+  input: { padding:10, borderRadius:10, border:'1px solid #d5dbe7', flex:'1 1 260px', fontSize:14, outline:'none' },
+  inputSmall: { padding:10, borderRadius:10, border:'1px solid #d5dbe7', flex:'0 1 220px', fontSize:14 },
+  tabBtn: { background:'#e7f2ff', border:'1px solid #cfe1ff', padding:'8px 14px', borderRadius:10, cursor:'pointer' },
+  activeBtn: { background:'#0b6bcb', color:'#fff', border:'none', padding:'8px 14px', borderRadius:10, cursor:'pointer' },
   fileInput: { marginBottom:16 },
   error: { color: 'red', marginTop: 4 },
-  primaryBtn: { background:'#0070f3', color:'#fff', border:'none', padding:'10px 16px', borderRadius:10, cursor:'pointer', marginBottom:0 },
+  primaryBtn: { background:'#0b6bcb', color:'#fff', border:'none', padding:'10px 16px', borderRadius:12, cursor:'pointer' },
 
   // GRID de tarjetas
   cardsGrid: { display:'grid', gridTemplateColumns:'repeat( auto-fill, minmax(280px, 1fr) )', gap:16 },
   empty: { padding:24, textAlign:'center', color:'#666', gridColumn:'1/-1' },
-  card: { background:'#ffffff', border:'1px solid #e9edf5', borderRadius:12, overflow:'hidden', display:'flex', flexDirection:'column', boxShadow:'0 2px 10px rgba(0,0,0,0.04)' },
+  card: { background:'#ffffff', border:'1px solid #ebeff7', borderRadius:12, overflow:'hidden', display:'flex', flexDirection:'column', boxShadow:'0 2px 10px rgba(0,0,0,0.04)' },
   cardHeader: { display:'flex', alignItems:'center', justifyContent:'space-between', padding:16, borderBottom:'1px solid #f0f3fa' },
   avatar: { width:40, height:40, borderRadius:999, background:'#e3f2fd', color:'#0d47a1', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700 },
   cardName: { fontWeight:700 },
-  badge: { display:'inline-block', marginTop:4, fontSize:12, background:'#e3f2fd', color:'#0d47a1', padding:'2px 8px', borderRadius:999 },
+  badge: { display:'inline-block', marginTop:4, fontSize:12, background:'#f0f7ff', color:'#0b6bcb', padding:'2px 8px', borderRadius:999 },
   whatsappIcon: { fontSize:22, textDecoration:'none' },
   cardBody: { padding:16, display:'grid', gap:6 },
   row: { display:'flex', justifyContent:'space-between', gap:8, fontSize:14 },
@@ -625,17 +700,14 @@ const styles = {
   kpi: { display:'flex', flexDirection:'column', gap:2 },
   cardActions: { display:'flex', gap:8, padding:12, justifyContent:'flex-end' },
 
-  // Formulario
-  form: { border:'1px solid #e9edf5', borderRadius:12, padding:16, marginTop:16 },
+  // Formulario modal y modal base
   formRow: { display:'flex', gap:16, flexWrap:'wrap' },
   formCol: { flex:'1 1 320px', minWidth:260 },
-  formActions: { marginTop: 16, textAlign: 'right' },
   smallBtn: { background:'#28a745', color:'#fff', border:'none', padding:'6px 10px', borderRadius:8, cursor:'pointer', fontSize:12 },
   smallDangerBtn: { background:'#dc3545', color:'#fff', border:'none', padding:'6px 10px', borderRadius:8, cursor:'pointer', fontSize:12 },
 
-  // Modal
-  emailModalOverlay: { position:'fixed', left:0, top:0, width:'100vw', height:'100vh', background:'rgba(0,0,0,0.3)', display:'flex', justifyContent:'center', alignItems:'center', zIndex:3000 },
-  emailModalContent: { background:'#fff', borderRadius:12, padding:24, width:'90%', maxWidth:700, boxShadow:'0 16px 48px rgba(0,0,0,0.2)' },
-  emailListBox: { width:'100%', height:200, padding:8, fontSize:14, borderRadius:8, border:'1px solid #d5dbe7', marginBottom:16, resize:'none' },
-  modalCloseBtn: { background:'#0070f3', color:'#fff', border:'none', borderRadius:10, padding:'10px 16px', fontSize:14, cursor:'pointer' },
+  modalOverlay: { position:'fixed', left:0, top:0, width:'100vw', height:'100vh', background:'rgba(0,0,0,0.35)', display:'flex', justifyContent:'center', alignItems:'center', zIndex:3000, padding:12 },
+  modalContent: { background:'#fff', borderRadius:14, padding:24, width:'100%', maxWidth:720, boxShadow:'0 16px 48px rgba(0,0,0,0.18)' },
+  emailListBox: { width:'100%', height:200, padding:8, fontSize:14, borderRadius:10, border:'1px solid #d5dbe7', marginBottom:16, resize:'none' },
+  modalCloseBtn: { background:'#64748b', color:'#fff', border:'none', borderRadius:10, padding:'10px 16px', fontSize:14, cursor:'pointer' },
 };
