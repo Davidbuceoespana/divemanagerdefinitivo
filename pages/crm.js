@@ -2,17 +2,16 @@ import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 
 // =============================================================
-// CRM RENOVADO
-// - Visual más atractivo en tarjetas
-// - Mantiene TODAS las cualidades (buscar, importar CSV, Google Sheet, exportar, emails, ver/editar/borrar)
-// - Solo 7 campos visibles por cliente:
-//   name (Nombre y apellidos), dob (Fecha de nacimiento), email, phone,
-//   address (Dirección completa), dni, certification (Titulación de buceo)
-// - Internamente conservamos id, registered, purchases, points para no perder métricas
+// CRM SUPREMO — Vista moderna + búsqueda/filtrado potentes
+// - Solo 7 campos por cliente: name, dob, email, phone, address, dni, certification
+// - Import CSV / Google Sheet (delimitador auto), export CSV, lista de emails
+// - Grid de tarjetas + Modal "Ver" con EDICIÓN inline
+// - Filtro por Titulación + búsqueda dentro del filtro
+// - Migración suave desde datos antiguos (si existen)
+// - Mantiene meta: id, registered, purchases, points (solo lectura)
 // =============================================================
 
 // =================== CSV PARSER ===============================
-// Robusto con delimitador auto (coma o punto y coma) y cabeceras flexibles.
 function parseCSV(csvText) {
   const lines = (csvText || '').trim().split(/\r?\n/);
   if (lines.length < 2) return [];
@@ -35,7 +34,7 @@ function parseCSV(csvText) {
   const rawHeaders = headerLine.split(delimiter).map(h => h.trim());
   const headers = rawHeaders.map(norm);
 
-  // Localizar índices de campos (admite variantes)
+  // Func para localizar índices de campos (admite variantes)
   const idx = (predicates) => {
     for (let i = 0; i < headers.length; i++) {
       const h = headers[i];
@@ -44,10 +43,11 @@ function parseCSV(csvText) {
     return -1;
   };
 
-  // Regla: nombre puede venir como "nombre y apellidos" o en dos columnas
+  // Nombre: puede venir en una columna o separadas
   const nameIdx = idx([
     h => h.includes('nombre y apellidos'),
-    h => h === 'nombre',
+    h => h === 'nombre completo',
+    h => h === 'name',
     h => h.includes('full name'),
   ]);
   const firstNameIdx = nameIdx === -1 ? idx([h => h === 'nombre', h => h.includes('first')]) : -1;
@@ -70,7 +70,7 @@ function parseCSV(csvText) {
     h => h.includes('address'),
   ]);
 
-  const dniIdx = idx([h => h === 'dni', h => h.includes('d n i'), h => h === 'nie', h => h.includes('documento'), h => h.includes('id')]);
+  const dniIdx = idx([h => h === 'dni', h => h.includes('d n i'), h => h === 'nie', h => h.includes('documento'), h => h === 'id']);
 
   const certIdx = idx([
     h => h.includes('titulacion de buceo'),
@@ -82,9 +82,7 @@ function parseCSV(csvText) {
     h => h.includes('qualification'),
   ]);
 
-  const dataLines = lines.slice(1);
-
-  return dataLines.map(line => {
+  return lines.slice(1).map(line => {
     const cols = line.split(delimiter).map(c => c.trim());
 
     let name = '';
@@ -123,9 +121,7 @@ export default function CrmPage() {
   const [center, setCenter] = useState(null);
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      setCenter(localStorage.getItem('active_center'));
-    }
+    if (typeof window !== 'undefined') setCenter(localStorage.getItem('active_center'));
   }, []);
 
   const STORAGE_KEY = center ? `dive_manager_clients_${center}` : null;
@@ -134,37 +130,28 @@ export default function CrmPage() {
   const [clients, setClients] = useState([]);
   const [mode, setMode] = useState('manual'); // manual | import | google
   const [file, setFile] = useState(null);
-  const [sheetUrl, setSheetUrl] = useState(
-    typeof window !== 'undefined' ? localStorage.getItem('sheetUrl') || '' : ''
-  );
+  const [sheetUrl, setSheetUrl] = useState(typeof window !== 'undefined' ? localStorage.getItem('sheetUrl') || '' : '');
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [emailList, setEmailList] = useState('');
   const [selectedClient, setSelectedClient] = useState(null);
+  const [selectedEdit, setSelectedEdit] = useState(false);
+  const [selectedForm, setSelectedForm] = useState(null);
   const [certFilter, setCertFilter] = useState('');
+  const [validationErr, setValidationErr] = useState('');
 
   // Persistir sheetUrl
-  useEffect(() => {
-    if (typeof window !== 'undefined') localStorage.setItem('sheetUrl', sheetUrl);
-  }, [sheetUrl]);
+  useEffect(() => { if (typeof window !== 'undefined') localStorage.setItem('sheetUrl', sheetUrl); }, [sheetUrl]);
 
   // ======= Modelo de cliente (7 campos + meta) =======
   const initialForm = {
-    name: '',
-    dob: '',
-    email: '',
-    phone: '',
-    address: '',
-    dni: '',
-    certification: '',
-    purchases: [],
-    points: 0,
+    name: '', dob: '', email: '', phone: '', address: '', dni: '', certification: '', purchases: [], points: 0,
   };
   const [form, setForm] = useState(initialForm);
 
-  // ======= Carga inicial: migración suave desde versiones anteriores =======
+  // ======= Carga inicial & migración suave =======
   useEffect(() => {
     if (!center) return;
     const st = localStorage.getItem(STORAGE_KEY);
@@ -172,7 +159,6 @@ export default function CrmPage() {
     const arr = JSON.parse(st);
 
     const normalized = arr.map((c) => {
-      // Derivar nombre si venía separado
       const name = c.name || `${c.firstName || ''} ${c.lastName || ''}`.trim();
       return {
         id: c.id || Date.now() + Math.random(),
@@ -194,19 +180,13 @@ export default function CrmPage() {
   }, [center, STORAGE_KEY]);
 
   // Guardar cambios en clientes
-  useEffect(() => {
-    if (!center) return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(clients));
-  }, [clients, center, STORAGE_KEY]);
+  useEffect(() => { if (!center) return; localStorage.setItem(STORAGE_KEY, JSON.stringify(clients)); }, [clients, center, STORAGE_KEY]);
 
   // Importar CSV
   useEffect(() => {
     if (mode === 'import' && file) {
       const reader = new FileReader();
-      reader.onload = (e) => {
-        const parsed = parseCSV(e.target.result);
-        setClients(parsed.reverse());
-      };
+      reader.onload = (e) => { const parsed = parseCSV(e.target.result); setClients(parsed.reverse()); };
       reader.readAsText(file);
     }
   }, [mode, file]);
@@ -223,9 +203,7 @@ export default function CrmPage() {
     if (!sheetUrl) return;
     setError('');
     let csvUrl;
-    if (sheetUrl.includes('output=csv')) {
-      csvUrl = sheetUrl;
-    } else {
+    if (sheetUrl.includes('output=csv')) csvUrl = sheetUrl; else {
       const m = sheetUrl.match(/\/d\/([^/]+)/);
       if (!m) { setError('URL de Google Sheet no válida'); return; }
       const sheetId = m[1];
@@ -235,21 +213,24 @@ export default function CrmPage() {
     }
     fetch(csvUrl)
       .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.text(); })
-      .then(txt => {
-        const parsed = parseCSV(txt);
-        setClients(parsed.reverse());
-      })
+      .then(txt => { const parsed = parseCSV(txt); setClients(parsed.reverse()); })
       .catch(err => setError(`No se pudo cargar Google Sheet: ${err.message}`));
   }
 
   // ======== Helpers ========
   const ageFromDob = (dob) => {
     if (!dob) return '';
-    const d = new Date(dob);
-    if (Number.isNaN(d.getTime())) return '';
+    const d = new Date(dob); if (Number.isNaN(d.getTime())) return '';
     const diff = Date.now() - d.getTime();
     const age = new Date(diff).getUTCFullYear() - 1970;
     return age >= 0 ? `${age}` : '';
+  };
+
+  const escapeReg = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const highlight = (text, query) => {
+    if (!query) return text;
+    const parts = String(text || '').split(new RegExp(`(${escapeReg(query)})`, 'ig'));
+    return parts.map((p, i) => p.toLowerCase() === query.toLowerCase() ? <mark key={i}>{p}</mark> : <span key={i}>{p}</span>);
   };
 
   // ======== Filtrado + Orden ========
@@ -269,9 +250,9 @@ export default function CrmPage() {
     ));
   }, [clients, searchTerm, certFilter]);
 
-  // Auto mostrar modal si solo hay 1 resultado
+  // Auto mostrar modal si solo hay 1 resultado y hay búsqueda
   useEffect(() => {
-    if (filtered.length === 1 && searchTerm) setSelectedClient(filtered[0]);
+    if (filtered.length === 1 && searchTerm) { setSelectedClient(filtered[0]); setSelectedEdit(false); setSelectedForm(null); }
   }, [filtered, searchTerm]);
 
   // ======== CRUD ========
@@ -280,8 +261,7 @@ export default function CrmPage() {
   const handleAdd = (e) => {
     e.preventDefault();
     const nuevo = { ...form, id: Date.now(), registered: new Date().toISOString() };
-    setClients(c => [nuevo, ...c]);
-    setForm(initialForm); setShowForm(false); setSearchTerm('');
+    setClients(c => [nuevo, ...c]); setForm(initialForm); setShowForm(false); setSearchTerm('');
   };
 
   const handleSave = (e) => {
@@ -297,32 +277,23 @@ export default function CrmPage() {
   const exportToCSV = () => {
     const headers = ['Nombre y Apellidos','Fecha Nacimiento','Email','Telefono','Direccion','DNI','Titulacion','Puntos',`Gastado ${currentYear}`];
     const rows = filtered.map(c => {
-      const gasto = (c.purchases || [])
-        .filter(pu => new Date(pu.date).getFullYear() === currentYear)
-        .reduce((s, pu) => s + (pu.amount || 0), 0);
-      return [
-        c.name || '',
-        c.dob || '',
-        c.email || '',
-        c.phone || '',
-        c.address || '',
-        c.dni || '',
-        c.certification || '',
-        c.points || 0,
-        gasto.toFixed(2)
-      ].join(',');
+      const gasto = (c.purchases || []).filter(pu => new Date(pu.date).getFullYear() === currentYear).reduce((s, pu) => s + (pu.amount || 0), 0);
+      return [c.name||'', c.dob||'', c.email||'', c.phone||'', c.address||'', c.dni||'', c.certification||'', c.points||0, gasto.toFixed(2)].join(',');
     });
     const csvContent = [headers.join(','), ...rows].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = 'clientes.csv'; a.click();
-    URL.revokeObjectURL(url);
+    const a = document.createElement('a'); a.href = url; a.download = 'clientes.csv'; a.click(); URL.revokeObjectURL(url);
   };
 
-  const generateEmailList = () => {
-    const list = filtered.map(c => c.email).filter(Boolean).join('; ');
-    setEmailList(list);
+  const generateEmailList = () => { const list = filtered.map(c => c.email).filter(Boolean).join('; '); setEmailList(list); };
+
+  // ======== Validación simple ========
+  const validateClient = (c) => {
+    if (!c.name?.trim()) return 'El nombre es obligatorio';
+    if (c.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email)) return 'Email no válido';
+    if (c.phone && !/^\+?[0-9()\-\s]{6,}$/.test(c.phone)) return 'Teléfono no válido';
+    return '';
   };
 
   if (center === null) return <p>Cargando CRM...</p>;
@@ -370,7 +341,7 @@ export default function CrmPage() {
         <div style={styles.controls}>
           <input
             list="lst"
-            placeholder="Buscar por nombre, email, teléfono, dirección o DNI..."
+            placeholder={certFilter ? `Buscar dentro de "${certFilter}"...` : 'Buscar por nombre, email, teléfono, dirección o DNI...'}
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
             style={styles.input}
@@ -388,6 +359,10 @@ export default function CrmPage() {
             {uniqueCerts.map((v, i) => <option key={i} value={v}>{v}</option>)}
           </select>
 
+          {certFilter && (
+            <button onClick={() => setCertFilter('')} style={styles.tabBtn}>Quitar filtro</button>
+          )}
+
           {['manual', 'import', 'google'].map(m => (
             <button
               key={m}
@@ -400,41 +375,26 @@ export default function CrmPage() {
         </div>
 
         {mode === 'import' && (
-          <input
-            type="file"
-            accept=".csv"
-            onChange={e => setFile(e.target.files[0])}
-            style={styles.fileInput}
-          />
+          <input type="file" accept=".csv" onChange={e => setFile(e.target.files[0])} style={styles.fileInput} />
         )}
         {mode === 'google' && (
           <div style={{ marginBottom: 16, width: '100%' }}>
-            <input
-              type="text"
-              placeholder="URL Google Sheet"
-              value={sheetUrl}
-              onChange={e => setSheetUrl(e.target.value)}
-              style={styles.input}
-            />
+            <input type="text" placeholder="URL Google Sheet" value={sheetUrl} onChange={e => setSheetUrl(e.target.value)} style={styles.input} />
             {error && <p style={styles.error}>{error}</p>}
           </div>
         )}
 
         {mode === 'manual' && !showForm && (
-          <button
-            style={styles.primaryBtn}
-            onClick={() => { setForm(initialForm); setEditing(null); setShowForm(true); }}
-          >
-            + Añadir Cliente
-          </button>
+          <button style={styles.primaryBtn} onClick={() => { setForm(initialForm); setEditing(null); setShowForm(true); }}>+ Añadir Cliente</button>
         )}
 
         {/* GRID de tarjetas de clientes */}
         <div style={styles.cardsGrid}>
+          {filtered.length === 0 && (
+            <div style={styles.empty}>No hay resultados. Prueba quitar el filtro o cambia la búsqueda.</div>
+          )}
           {filtered.map(c => {
-            const gasto = (c.purchases || [])
-              .filter(pu => new Date(pu.date).getFullYear() === currentYear)
-              .reduce((s, pu) => s + (pu.amount || 0), 0);
+            const gasto = (c.purchases || []).filter(pu => new Date(pu.date).getFullYear() === currentYear).reduce((s, pu) => s + (pu.amount || 0), 0);
             const age = ageFromDob(c.dob);
             const phoneDigits = (c.phone || '').replace(/\D/g, '');
             return (
@@ -443,30 +403,25 @@ export default function CrmPage() {
                   <div style={{display:'flex', alignItems:'center', gap:8}}>
                     <div style={styles.avatar}>{(c.name || '?').slice(0,1).toUpperCase()}</div>
                     <div>
-                      <div style={styles.cardName}>{c.name || 'Sin nombre'}</div>
+                      <div style={styles.cardName}>{highlight(c.name || 'Sin nombre', searchTerm)}</div>
                       {c.certification && (
-                        <div style={styles.badge}>{c.certification}</div>
+                        <div style={styles.badge}>{highlight(c.certification, searchTerm)}</div>
                       )}
                     </div>
                   </div>
                   {c.phone && (
                     <a
                       href={`https://wa.me/${phoneDigits}?text=${encodeURIComponent(`Hola ${c.name || ''}, te escribimos desde Buceo España`)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={styles.whatsappIcon}
-                      title="Enviar WhatsApp"
-                    >
-                      📲
-                    </a>
+                      target="_blank" rel="noopener noreferrer" style={styles.whatsappIcon} title="Enviar WhatsApp"
+                    >📲</a>
                   )}
                 </div>
 
                 <div style={styles.cardBody}>
-                  <div style={styles.row}><span style={styles.label}>Email:</span><span>{c.email || '—'}</span></div>
-                  <div style={styles.row}><span style={styles.label}>Teléfono:</span><span>{c.phone || '—'}</span></div>
-                  <div style={styles.row}><span style={styles.label}>DNI:</span><span>{c.dni || '—'}</span></div>
-                  <div style={styles.row}><span style={styles.label}>Dirección:</span><span>{c.address || '—'}</span></div>
+                  <div style={styles.row}><span style={styles.label}>Email:</span><span>{highlight(c.email || '—', searchTerm)}</span></div>
+                  <div style={styles.row}><span style={styles.label}>Teléfono:</span><span>{highlight(c.phone || '—', searchTerm)}</span></div>
+                  <div style={styles.row}><span style={styles.label}>DNI:</span><span>{highlight(c.dni || '—', searchTerm)}</span></div>
+                  <div style={styles.row}><span style={styles.label}>Dirección:</span><span>{highlight(c.address || '—', searchTerm)}</span></div>
                   <div style={styles.row}><span style={styles.label}>Fecha nac.:</span><span>{c.dob || '—'} {age && `( ${age} años )`}</span></div>
                 </div>
 
@@ -476,7 +431,7 @@ export default function CrmPage() {
                 </div>
 
                 <div style={styles.cardActions}>
-                  <button style={styles.smallBtn} onClick={() => setSelectedClient(c)}>Ver</button>
+                  <button style={styles.smallBtn} onClick={() => { setSelectedClient(c); setSelectedEdit(false); setSelectedForm(null); }}>Ver</button>
                   <button style={styles.smallBtn} onClick={() => startEdit(c)}>Editar</button>
                   <button style={styles.smallDangerBtn} onClick={() => handleDelete(c.id)}>Borrar</button>
                 </div>
@@ -491,72 +446,35 @@ export default function CrmPage() {
             <div style={styles.formRow}>
               <div style={styles.formCol}>
                 <label style={styles.label}>Nombre y apellidos 📝</label>
-                <input
-                  required
-                  value={form.name}
-                  onChange={e => setForm({ ...form, name: e.target.value })}
-                  style={styles.input}
-                />
+                <input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} style={styles.input} />
 
                 <label style={styles.label}>Fecha de nacimiento 🔍</label>
-                <input
-                  type="date"
-                  value={form.dob}
-                  onChange={e => setForm({ ...form, dob: e.target.value })}
-                  style={styles.input}
-                />
+                <input type="date" value={form.dob} onChange={e => setForm({ ...form, dob: e.target.value })} style={styles.input} />
 
                 <label style={styles.label}>Correo electrónico 📧</label>
-                <input
-                  type="email"
-                  value={form.email}
-                  onChange={e => setForm({ ...form, email: e.target.value })}
-                  style={styles.input}
-                />
+                <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} style={styles.input} />
               </div>
 
               <div style={styles.formCol}>
                 <label style={styles.label}>Teléfono 📱</label>
-                <input
-                  type="tel"
-                  value={form.phone}
-                  onChange={e => setForm({ ...form, phone: e.target.value })}
-                  style={styles.input}
-                />
+                <input type="tel" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} style={styles.input} />
 
                 <label style={styles.label}>Dirección completa 🏠</label>
-                <input
-                  value={form.address}
-                  onChange={e => setForm({ ...form, address: e.target.value })}
-                  style={styles.input}
-                />
+                <input value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} style={styles.input} />
 
                 <label style={styles.label}>DNI / NIE 📄</label>
-                <input
-                  value={form.dni}
-                  onChange={e => setForm({ ...form, dni: e.target.value.toUpperCase() })}
-                  style={styles.input}
-                />
+                <input value={form.dni} onChange={e => setForm({ ...form, dni: e.target.value.toUpperCase() })} style={styles.input} />
               </div>
 
               <div style={styles.formCol}>
                 <label style={styles.label}>Titulación de buceo 🎓</label>
-                <input
-                  value={form.certification}
-                  onChange={e => setForm({ ...form, certification: e.target.value })}
-                  style={styles.input}
-                />
+                <input value={form.certification} onChange={e => setForm({ ...form, certification: e.target.value })} style={styles.input} />
 
-                {/* KPIs solo lectura para no perder funcionalidad */}
                 <div style={{ marginTop: 16, padding: 12, background:'#f7faff', border:'1px solid #e2ecff', borderRadius:8 }}>
                   <div style={{fontWeight:600, marginBottom:8}}>Resumen</div>
                   <div style={{display:'flex', gap:16}}>
                     <div style={styles.kpi}><small>Puntos</small><strong>{form.points || 0}</strong></div>
-                    {/* Gastos del año actual si existieran compras */}
-                    <div style={styles.kpi}>
-                      <small>Gastado {currentYear}</small>
-                      <strong>{((form.purchases || []).filter(p => new Date(p.date).getFullYear() === currentYear).reduce((s,p) => s + (p.amount || 0), 0)).toFixed(2)}€</strong>
-                    </div>
+                    <div style={styles.kpi}><small>Gastado {currentYear}</small><strong>{((form.purchases || []).filter(p => new Date(p.date).getFullYear() === currentYear).reduce((s,p) => s + (p.amount || 0), 0)).toFixed(2)}€</strong></div>
                   </div>
                 </div>
               </div>
@@ -564,13 +482,7 @@ export default function CrmPage() {
 
             <div style={styles.formActions}>
               <button type="submit" style={styles.primaryBtn}>{editing ? 'Guardar' : 'Añadir Cliente'}</button>
-              <button
-                type="button"
-                onClick={() => { setShowForm(false); setEditing(null); setForm(initialForm); setSearchTerm(''); }}
-                style={styles.smallDangerBtn}
-              >
-                Cancelar
-              </button>
+              <button type="button" onClick={() => { setShowForm(false); setEditing(null); setForm(initialForm); setSearchTerm(''); }} style={styles.smallDangerBtn}>Cancelar</button>
             </div>
           </form>
         )}
@@ -587,29 +499,84 @@ export default function CrmPage() {
         </div>
       )}
 
-      {/* Modal ver cliente */}
+      {/* Modal ver/editar cliente seleccionado */}
       {selectedClient && (
         <div style={styles.emailModalOverlay}>
           <div style={styles.emailModalContent}>
-            <h2>{selectedClient.name}</h2>
-            <p><strong>Email:</strong> {selectedClient.email || '—'}</p>
-            <p><strong>Teléfono:</strong> {selectedClient.phone || '—'}</p>
-            <p><strong>DNI:</strong> {selectedClient.dni || '—'}</p>
-            <p><strong>Dirección:</strong> {selectedClient.address || '—'}</p>
-            <p><strong>Fecha Nac.:</strong> {selectedClient.dob || '—'}</p>
-            <p><strong>Titulación:</strong> {selectedClient.certification || '—'}</p>
-            <p>
-              <strong>Gastado {currentYear}:</strong>{' '}
-              {(
-                (selectedClient.purchases || [])
-                  .filter(pu => new Date(pu.date).getFullYear() === currentYear)
-                  .reduce((s, pu) => s + (pu.amount || 0), 0)
-              ).toFixed(2)}€
-            </p>
-            <p><strong>Puntos:</strong> {selectedClient.points || 0}</p>
-            <div style={{marginTop:12, textAlign:'right'}}>
-              <button onClick={() => { setSelectedClient(null); setSearchTerm(''); }} style={styles.modalCloseBtn}>Cerrar</button>
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12}}>
+              <h2 style={{margin:0}}>{selectedEdit ? 'Editar cliente' : selectedClient.name}</h2>
+              <div style={{display:'flex', gap:8}}>
+                {!selectedEdit && (
+                  <button style={styles.smallBtn} onClick={() => { setSelectedEdit(true); setSelectedForm({ ...initialForm, ...selectedClient }); setValidationErr(''); }}>Editar aquí</button>
+                )}
+                <button onClick={() => { setSelectedClient(null); setSelectedEdit(false); setSelectedForm(null); setSearchTerm(''); }} style={styles.modalCloseBtn}>Cerrar</button>
+              </div>
             </div>
+
+            {!selectedEdit ? (
+              <div>
+                <p><strong>Email:</strong> {selectedClient.email || '—'}</p>
+                <p><strong>Teléfono:</strong> {selectedClient.phone || '—'}</p>
+                <p><strong>DNI:</strong> {selectedClient.dni || '—'}</p>
+                <p><strong>Dirección:</strong> {selectedClient.address || '—'}</p>
+                <p><strong>Fecha Nac.:</strong> {selectedClient.dob || '—'}</p>
+                <p><strong>Titulación:</strong> {selectedClient.certification || '—'}</p>
+                <p><strong>Puntos:</strong> {selectedClient.points || 0}</p>
+                <p><strong>Gastado {currentYear}:</strong> {((selectedClient.purchases || []).filter(pu => new Date(pu.date).getFullYear() === currentYear).reduce((s, pu) => s + (pu.amount || 0), 0)).toFixed(2)}€</p>
+              </div>
+            ) : (
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                const msg = validateClient(selectedForm); if (msg) { setValidationErr(msg); return; }
+                setClients(c => c.map(cu => cu.id === selectedClient.id ? { ...cu, ...selectedForm } : cu));
+                setSelectedClient(prev => ({ ...prev, ...selectedForm }));
+                setSelectedEdit(false); setSelectedForm(null); setValidationErr('');
+              }}>
+                <div style={styles.formRow}>
+                  <div style={styles.formCol}>
+                    <label style={styles.label}>Nombre y apellidos</label>
+                    <input value={selectedForm?.name || ''} onChange={e => setSelectedForm({ ...selectedForm, name: e.target.value })} style={styles.input} />
+
+                    <label style={styles.label}>Fecha de nacimiento</label>
+                    <input type="date" value={selectedForm?.dob || ''} onChange={e => setSelectedForm({ ...selectedForm, dob: e.target.value })} style={styles.input} />
+
+                    <label style={styles.label}>Correo electrónico</label>
+                    <input type="email" value={selectedForm?.email || ''} onChange={e => setSelectedForm({ ...selectedForm, email: e.target.value })} style={styles.input} />
+                  </div>
+
+                  <div style={styles.formCol}>
+                    <label style={styles.label}>Teléfono</label>
+                    <input type="tel" value={selectedForm?.phone || ''} onChange={e => setSelectedForm({ ...selectedForm, phone: e.target.value })} style={styles.input} />
+
+                    <label style={styles.label}>Dirección completa</label>
+                    <input value={selectedForm?.address || ''} onChange={e => setSelectedForm({ ...selectedForm, address: e.target.value })} style={styles.input} />
+
+                    <label style={styles.label}>DNI / NIE</label>
+                    <input value={selectedForm?.dni || ''} onChange={e => setSelectedForm({ ...selectedForm, dni: e.target.value.toUpperCase() })} style={styles.input} />
+                  </div>
+
+                  <div style={styles.formCol}>
+                    <label style={styles.label}>Titulación de buceo</label>
+                    <input value={selectedForm?.certification || ''} onChange={e => setSelectedForm({ ...selectedForm, certification: e.target.value })} style={styles.input} />
+
+                    <div style={{ marginTop: 16, padding: 12, background:'#f7faff', border:'1px solid #e2ecff', borderRadius:8 }}>
+                      <div style={{fontWeight:600, marginBottom:8}}>Resumen</div>
+                      <div style={{display:'flex', gap:16}}>
+                        <div style={styles.kpi}><small>Puntos</small><strong>{selectedClient.points || 0}</strong></div>
+                        <div style={styles.kpi}><small>Gastado {currentYear}</small><strong>{((selectedClient.purchases || []).filter(p => new Date(p.date).getFullYear() === currentYear).reduce((s,p) => s + (p.amount || 0), 0)).toFixed(2)}€</strong></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {validationErr && <p style={{color:'#d9534f', marginTop:8}}>{validationErr}</p>}
+
+                <div style={{marginTop:12, textAlign:'right'}}>
+                  <button type="button" onClick={() => { setSelectedEdit(false); setSelectedForm(null); setValidationErr(''); }} style={{...styles.smallDangerBtn, marginRight:8}}>Cancelar</button>
+                  <button type="submit" style={styles.primaryBtn}>Guardar cambios</button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}
@@ -640,10 +607,11 @@ const styles = {
   activeBtn: { background:'#0070f3', color:'#fff', border:'none', padding:'8px 14px', borderRadius:8, cursor:'pointer' },
   fileInput: { marginBottom:16 },
   error: { color: 'red', marginTop: 4 },
-  primaryBtn: { background:'#0070f3', color:'#fff', border:'none', padding:'10px 16px', borderRadius:10, cursor:'pointer', marginBottom:16 },
+  primaryBtn: { background:'#0070f3', color:'#fff', border:'none', padding:'10px 16px', borderRadius:10, cursor:'pointer', marginBottom:0 },
 
   // GRID de tarjetas
   cardsGrid: { display:'grid', gridTemplateColumns:'repeat( auto-fill, minmax(280px, 1fr) )', gap:16 },
+  empty: { padding:24, textAlign:'center', color:'#666', gridColumn:'1/-1' },
   card: { background:'#ffffff', border:'1px solid #e9edf5', borderRadius:12, overflow:'hidden', display:'flex', flexDirection:'column', boxShadow:'0 2px 10px rgba(0,0,0,0.04)' },
   cardHeader: { display:'flex', alignItems:'center', justifyContent:'space-between', padding:16, borderBottom:'1px solid #f0f3fa' },
   avatar: { width:40, height:40, borderRadius:999, background:'#e3f2fd', color:'#0d47a1', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700 },
@@ -667,7 +635,7 @@ const styles = {
 
   // Modal
   emailModalOverlay: { position:'fixed', left:0, top:0, width:'100vw', height:'100vh', background:'rgba(0,0,0,0.3)', display:'flex', justifyContent:'center', alignItems:'center', zIndex:3000 },
-  emailModalContent: { background:'#fff', borderRadius:12, padding:24, width:'90%', maxWidth:640, boxShadow:'0 16px 48px rgba(0,0,0,0.2)' },
+  emailModalContent: { background:'#fff', borderRadius:12, padding:24, width:'90%', maxWidth:700, boxShadow:'0 16px 48px rgba(0,0,0,0.2)' },
   emailListBox: { width:'100%', height:200, padding:8, fontSize:14, borderRadius:8, border:'1px solid #d5dbe7', marginBottom:16, resize:'none' },
   modalCloseBtn: { background:'#0070f3', color:'#fff', border:'none', borderRadius:10, padding:'10px 16px', fontSize:14, cursor:'pointer' },
 };
