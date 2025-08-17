@@ -1,0 +1,673 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import Link from 'next/link';
+
+// =============================================================
+// CRM RENOVADO
+// - Visual más atractivo en tarjetas
+// - Mantiene TODAS las cualidades (buscar, importar CSV, Google Sheet, exportar, emails, ver/editar/borrar)
+// - Solo 7 campos visibles por cliente:
+//   name (Nombre y apellidos), dob (Fecha de nacimiento), email, phone,
+//   address (Dirección completa), dni, certification (Titulación de buceo)
+// - Internamente conservamos id, registered, purchases, points para no perder métricas
+// =============================================================
+
+// =================== CSV PARSER ===============================
+// Robusto con delimitador auto (coma o punto y coma) y cabeceras flexibles.
+function parseCSV(csvText) {
+  const lines = (csvText || '').trim().split(/\r?\n/);
+  if (lines.length < 2) return [];
+
+  // Detectar delimitador por primera línea
+  const headerLine = lines[0];
+  const commaCount = (headerLine.match(/,/g) || []).length;
+  const semiCount = (headerLine.match(/;/g) || []).length;
+  const delimiter = semiCount > commaCount ? ';' : ',';
+
+  // Normalizador de texto de cabecera
+  const norm = (s) => (s || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // quita tildes
+    .replace(/[^a-z0-9 ]/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+
+  // Cabeceras crudas y normalizadas
+  const rawHeaders = headerLine.split(delimiter).map(h => h.trim());
+  const headers = rawHeaders.map(norm);
+
+  // Localizar índices de campos (admite variantes)
+  const idx = (predicates) => {
+    for (let i = 0; i < headers.length; i++) {
+      const h = headers[i];
+      if (predicates.some(p => p(h))) return i;
+    }
+    return -1;
+  };
+
+  // Regla: nombre puede venir como "nombre y apellidos" o en dos columnas
+  const nameIdx = idx([
+    h => h.includes('nombre y apellidos'),
+    h => h === 'nombre',
+    h => h.includes('full name'),
+  ]);
+  const firstNameIdx = nameIdx === -1 ? idx([h => h === 'nombre', h => h.includes('first')]) : -1;
+  const lastNameIdx  = nameIdx === -1 ? idx([h => h.includes('apellidos'), h => h.includes('last')]) : -1;
+
+  const dobIdx = idx([
+    h => h.includes('fecha de nacimiento'),
+    h => h.includes('fecha nacimiento'),
+    h => h === 'nacimiento',
+    h => h === 'dob',
+  ]);
+
+  const emailIdx = idx([h => h.includes('correo electronico'), h => h === 'email', h => h.includes('correo')]);
+  const phoneIdx = idx([h => h.includes('telefono'), h => h.includes('movil'), h => h.includes('celular'), h => h.includes('phone')]);
+
+  const addressIdx = idx([
+    h => h.includes('direccion completa'),
+    h => h === 'direccion',
+    h => h === 'direccion postal',
+    h => h.includes('address'),
+  ]);
+
+  const dniIdx = idx([h => h === 'dni', h => h.includes('d n i'), h => h === 'nie', h => h.includes('documento'), h => h.includes('id')]);
+
+  const certIdx = idx([
+    h => h.includes('titulacion de buceo'),
+    h => h === 'titulacion',
+    h => h.includes('certificacion'),
+    h => h.includes('certification'),
+    h => h.includes('nivel de buceo'),
+    h => h === 'nivel',
+    h => h.includes('qualification'),
+  ]);
+
+  const dataLines = lines.slice(1);
+
+  return dataLines.map(line => {
+    const cols = line.split(delimiter).map(c => c.trim());
+
+    let name = '';
+    if (nameIdx !== -1) {
+      name = cols[nameIdx] || '';
+    } else if (firstNameIdx !== -1 || lastNameIdx !== -1) {
+      const fn = firstNameIdx !== -1 ? (cols[firstNameIdx] || '') : '';
+      const ln = lastNameIdx  !== -1 ? (cols[lastNameIdx]  || '') : '';
+      name = `${fn} ${ln}`.trim();
+    }
+
+    const obj = {
+      id: Date.now() + Math.random(),
+      name,
+      dob:        dobIdx     !== -1 ? (cols[dobIdx]    || '') : '',
+      email:      emailIdx   !== -1 ? (cols[emailIdx]  || '') : '',
+      phone:      phoneIdx   !== -1 ? (cols[phoneIdx]  || '') : '',
+      address:    addressIdx !== -1 ? (cols[addressIdx]|| '') : '',
+      dni:        dniIdx     !== -1 ? (cols[dniIdx]    || '') : '',
+      certification: certIdx !== -1 ? (cols[certIdx]   || '') : '',
+      purchases:  [],
+      points:     0,
+      registered: new Date().toISOString(),
+    };
+
+    // Limpieza ligera
+    obj.phone = (obj.phone || '').replace(/\s+/g, ' ').trim();
+    obj.email = (obj.email || '').trim();
+    obj.dni   = (obj.dni   || '').trim().toUpperCase();
+
+    return obj;
+  });
+}
+
+export default function CrmPage() {
+  const [center, setCenter] = useState(null);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setCenter(localStorage.getItem('active_center'));
+    }
+  }, []);
+
+  const STORAGE_KEY = center ? `dive_manager_clients_${center}` : null;
+  const currentYear = new Date().getFullYear();
+
+  const [clients, setClients] = useState([]);
+  const [mode, setMode] = useState('manual'); // manual | import | google
+  const [file, setFile] = useState(null);
+  const [sheetUrl, setSheetUrl] = useState(
+    typeof window !== 'undefined' ? localStorage.getItem('sheetUrl') || '' : ''
+  );
+  const [error, setError] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [emailList, setEmailList] = useState('');
+  const [selectedClient, setSelectedClient] = useState(null);
+  const [certFilter, setCertFilter] = useState('');
+
+  // Persistir sheetUrl
+  useEffect(() => {
+    if (typeof window !== 'undefined') localStorage.setItem('sheetUrl', sheetUrl);
+  }, [sheetUrl]);
+
+  // ======= Modelo de cliente (7 campos + meta) =======
+  const initialForm = {
+    name: '',
+    dob: '',
+    email: '',
+    phone: '',
+    address: '',
+    dni: '',
+    certification: '',
+    purchases: [],
+    points: 0,
+  };
+  const [form, setForm] = useState(initialForm);
+
+  // ======= Carga inicial: migración suave desde versiones anteriores =======
+  useEffect(() => {
+    if (!center) return;
+    const st = localStorage.getItem(STORAGE_KEY);
+    if (!st) return;
+    const arr = JSON.parse(st);
+
+    const normalized = arr.map((c) => {
+      // Derivar nombre si venía separado
+      const name = c.name || `${c.firstName || ''} ${c.lastName || ''}`.trim();
+      return {
+        id: c.id || Date.now() + Math.random(),
+        name: name || '',
+        dob: c.dob || '',
+        email: c.email || '',
+        phone: c.phone || '',
+        address: c.address || c.direccion || c.city || '',
+        dni: c.dni || c.nie || '',
+        certification: c.certification || c.titulacion || c.experience || '',
+        purchases: Array.isArray(c.purchases) ? c.purchases : [],
+        points: typeof c.points === 'number' ? c.points : 0,
+        registered: c.registered || new Date().toISOString(),
+      };
+    });
+
+    normalized.sort((a, b) => new Date(b.registered) - new Date(a.registered));
+    setClients(normalized);
+  }, [center, STORAGE_KEY]);
+
+  // Guardar cambios en clientes
+  useEffect(() => {
+    if (!center) return;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(clients));
+  }, [clients, center, STORAGE_KEY]);
+
+  // Importar CSV
+  useEffect(() => {
+    if (mode === 'import' && file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const parsed = parseCSV(e.target.result);
+        setClients(parsed.reverse());
+      };
+      reader.readAsText(file);
+    }
+  }, [mode, file]);
+
+  // Google Sheet polling
+  useEffect(() => {
+    if (mode !== 'google') return;
+    fetchSheet();
+    const id = setInterval(fetchSheet, 30000);
+    return () => clearInterval(id);
+  }, [mode, sheetUrl]);
+
+  function fetchSheet() {
+    if (!sheetUrl) return;
+    setError('');
+    let csvUrl;
+    if (sheetUrl.includes('output=csv')) {
+      csvUrl = sheetUrl;
+    } else {
+      const m = sheetUrl.match(/\/d\/([^/]+)/);
+      if (!m) { setError('URL de Google Sheet no válida'); return; }
+      const sheetId = m[1];
+      const gidMatch = sheetUrl.match(/gid=(\d+)/);
+      const gid = gidMatch ? gidMatch[1] : '0';
+      csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
+    }
+    fetch(csvUrl)
+      .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.text(); })
+      .then(txt => {
+        const parsed = parseCSV(txt);
+        setClients(parsed.reverse());
+      })
+      .catch(err => setError(`No se pudo cargar Google Sheet: ${err.message}`));
+  }
+
+  // ======== Helpers ========
+  const ageFromDob = (dob) => {
+    if (!dob) return '';
+    const d = new Date(dob);
+    if (Number.isNaN(d.getTime())) return '';
+    const diff = Date.now() - d.getTime();
+    const age = new Date(diff).getUTCFullYear() - 1970;
+    return age >= 0 ? `${age}` : '';
+  };
+
+  // ======== Filtrado + Orden ========
+  const filtered = useMemo(() => {
+    let base = [...clients].sort((a, b) => new Date(b.registered) - new Date(a.registered));
+
+    if (certFilter) base = base.filter(c => (c.certification || '').toLowerCase().includes(certFilter.toLowerCase()));
+
+    if (!searchTerm) return base;
+    const t = searchTerm.toLowerCase().trim();
+    return base.filter(c => (
+      (c.name || '').toLowerCase().includes(t) ||
+      (c.email || '').toLowerCase().includes(t) ||
+      (String(c.phone || '')).toLowerCase().includes(t) ||
+      (c.address || '').toLowerCase().includes(t) ||
+      (c.dni || '').toLowerCase().includes(t)
+    ));
+  }, [clients, searchTerm, certFilter]);
+
+  // Auto mostrar modal si solo hay 1 resultado
+  useEffect(() => {
+    if (filtered.length === 1 && searchTerm) setSelectedClient(filtered[0]);
+  }, [filtered, searchTerm]);
+
+  // ======== CRUD ========
+  const startEdit = (c) => { setEditing(c); setForm({ ...initialForm, ...c }); setShowForm(true); };
+
+  const handleAdd = (e) => {
+    e.preventDefault();
+    const nuevo = { ...form, id: Date.now(), registered: new Date().toISOString() };
+    setClients(c => [nuevo, ...c]);
+    setForm(initialForm); setShowForm(false); setSearchTerm('');
+  };
+
+  const handleSave = (e) => {
+    e.preventDefault();
+    setClients(c => c.map(cu => cu.id === editing.id ? { ...editing, ...form } : cu));
+    setEditing(null); setForm(initialForm); setShowForm(false); setSearchTerm('');
+  };
+
+  const handleDeleteAll = () => { if (confirm('¿Borrar TODOS los clientes?')) setClients([]); };
+  const handleDelete = (id) => { if (confirm('¿Borrar este cliente?')) setClients(c => c.filter(cu => cu.id !== id)); };
+
+  // ======== Exportar & Emails ========
+  const exportToCSV = () => {
+    const headers = ['Nombre y Apellidos','Fecha Nacimiento','Email','Telefono','Direccion','DNI','Titulacion','Puntos',`Gastado ${currentYear}`];
+    const rows = filtered.map(c => {
+      const gasto = (c.purchases || [])
+        .filter(pu => new Date(pu.date).getFullYear() === currentYear)
+        .reduce((s, pu) => s + (pu.amount || 0), 0);
+      return [
+        c.name || '',
+        c.dob || '',
+        c.email || '',
+        c.phone || '',
+        c.address || '',
+        c.dni || '',
+        c.certification || '',
+        c.points || 0,
+        gasto.toFixed(2)
+      ].join(',');
+    });
+    const csvContent = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'clientes.csv'; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const generateEmailList = () => {
+    const list = filtered.map(c => c.email).filter(Boolean).join('; ');
+    setEmailList(list);
+  };
+
+  if (center === null) return <p>Cargando CRM...</p>;
+
+  // ======== Métricas rápidas ========
+  const totalClients = clients.length;
+  const withEmail = clients.filter(c => !!c.email).length;
+  const withPhone = clients.filter(c => !!c.phone).length;
+
+  const uniqueCerts = [...new Set(clients.map(c => c.certification).filter(Boolean))];
+
+  return (
+    <div style={styles.page}>
+      <header style={styles.header}>
+        <h1 style={styles.logo}>CRM <span style={styles.logoD}>Buceo</span> España</h1>
+      </header>
+
+      <main style={styles.main}>
+        <div style={styles.topBar}>
+          <Link href="/" style={styles.link}>← Panel principal</Link>
+          <div style={{display:'flex', gap:8}}>
+            <button style={styles.tabBtn} onClick={generateEmailList}>Obtener Correos</button>
+            <button style={styles.tabBtn} onClick={exportToCSV}>Exportar Excel</button>
+            <button style={styles.dangerBtn} onClick={handleDeleteAll}>Borrar todos</button>
+          </div>
+        </div>
+
+        {/* Métricas */}
+        <div style={styles.metricsGrid}>
+          <div style={{...styles.metricCard, background:'#0d47a1'}}>
+            <small style={styles.metricLabel}>Total clientes</small>
+            <div style={styles.metricValue}>{totalClients}</div>
+          </div>
+          <div style={{...styles.metricCard, background:'#1565c0'}}>
+            <small style={styles.metricLabel}>Con email</small>
+            <div style={styles.metricValue}>{withEmail}</div>
+          </div>
+          <div style={{...styles.metricCard, background:'#1976d2'}}>
+            <small style={styles.metricLabel}>Con teléfono</small>
+            <div style={styles.metricValue}>{withPhone}</div>
+          </div>
+        </div>
+
+        {/* Controles */}
+        <div style={styles.controls}>
+          <input
+            list="lst"
+            placeholder="Buscar por nombre, email, teléfono, dirección o DNI..."
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            style={styles.input}
+          />
+          <datalist id="lst">
+            {filtered.map((c, i) => <option key={i} value={c.name} />)}
+          </datalist>
+
+          <select
+            value={certFilter}
+            onChange={e => setCertFilter(e.target.value)}
+            style={styles.inputSmall}
+          >
+            <option value="">— Filtrar por titulación —</option>
+            {uniqueCerts.map((v, i) => <option key={i} value={v}>{v}</option>)}
+          </select>
+
+          {['manual', 'import', 'google'].map(m => (
+            <button
+              key={m}
+              onClick={() => { setMode(m); setError(''); setShowForm(false); }}
+              style={mode === m ? styles.activeBtn : styles.tabBtn}
+            >
+              {m === 'manual' ? '+ Manual' : m === 'import' ? 'Importar CSV' : 'Google Sheet'}
+            </button>
+          ))}
+        </div>
+
+        {mode === 'import' && (
+          <input
+            type="file"
+            accept=".csv"
+            onChange={e => setFile(e.target.files[0])}
+            style={styles.fileInput}
+          />
+        )}
+        {mode === 'google' && (
+          <div style={{ marginBottom: 16, width: '100%' }}>
+            <input
+              type="text"
+              placeholder="URL Google Sheet"
+              value={sheetUrl}
+              onChange={e => setSheetUrl(e.target.value)}
+              style={styles.input}
+            />
+            {error && <p style={styles.error}>{error}</p>}
+          </div>
+        )}
+
+        {mode === 'manual' && !showForm && (
+          <button
+            style={styles.primaryBtn}
+            onClick={() => { setForm(initialForm); setEditing(null); setShowForm(true); }}
+          >
+            + Añadir Cliente
+          </button>
+        )}
+
+        {/* GRID de tarjetas de clientes */}
+        <div style={styles.cardsGrid}>
+          {filtered.map(c => {
+            const gasto = (c.purchases || [])
+              .filter(pu => new Date(pu.date).getFullYear() === currentYear)
+              .reduce((s, pu) => s + (pu.amount || 0), 0);
+            const age = ageFromDob(c.dob);
+            const phoneDigits = (c.phone || '').replace(/\D/g, '');
+            return (
+              <div key={c.id} style={styles.card}>
+                <div style={styles.cardHeader}>
+                  <div style={{display:'flex', alignItems:'center', gap:8}}>
+                    <div style={styles.avatar}>{(c.name || '?').slice(0,1).toUpperCase()}</div>
+                    <div>
+                      <div style={styles.cardName}>{c.name || 'Sin nombre'}</div>
+                      {c.certification && (
+                        <div style={styles.badge}>{c.certification}</div>
+                      )}
+                    </div>
+                  </div>
+                  {c.phone && (
+                    <a
+                      href={`https://wa.me/${phoneDigits}?text=${encodeURIComponent(`Hola ${c.name || ''}, te escribimos desde Buceo España`)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={styles.whatsappIcon}
+                      title="Enviar WhatsApp"
+                    >
+                      📲
+                    </a>
+                  )}
+                </div>
+
+                <div style={styles.cardBody}>
+                  <div style={styles.row}><span style={styles.label}>Email:</span><span>{c.email || '—'}</span></div>
+                  <div style={styles.row}><span style={styles.label}>Teléfono:</span><span>{c.phone || '—'}</span></div>
+                  <div style={styles.row}><span style={styles.label}>DNI:</span><span>{c.dni || '—'}</span></div>
+                  <div style={styles.row}><span style={styles.label}>Dirección:</span><span>{c.address || '—'}</span></div>
+                  <div style={styles.row}><span style={styles.label}>Fecha nac.:</span><span>{c.dob || '—'} {age && `( ${age} años )`}</span></div>
+                </div>
+
+                <div style={styles.cardFooter}>
+                  <div style={styles.kpi}><small>Puntos</small><strong>{c.points || 0}</strong></div>
+                  <div style={styles.kpi}><small>Gastado {currentYear}</small><strong>{gasto.toFixed(2)}€</strong></div>
+                </div>
+
+                <div style={styles.cardActions}>
+                  <button style={styles.smallBtn} onClick={() => setSelectedClient(c)}>Ver</button>
+                  <button style={styles.smallBtn} onClick={() => startEdit(c)}>Editar</button>
+                  <button style={styles.smallDangerBtn} onClick={() => handleDelete(c.id)}>Borrar</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Formulario crear/editar (solo 7 campos) */}
+        {showForm && (
+          <form onSubmit={editing ? handleSave : handleAdd} style={styles.form}>
+            <div style={styles.formRow}>
+              <div style={styles.formCol}>
+                <label style={styles.label}>Nombre y apellidos 📝</label>
+                <input
+                  required
+                  value={form.name}
+                  onChange={e => setForm({ ...form, name: e.target.value })}
+                  style={styles.input}
+                />
+
+                <label style={styles.label}>Fecha de nacimiento 🔍</label>
+                <input
+                  type="date"
+                  value={form.dob}
+                  onChange={e => setForm({ ...form, dob: e.target.value })}
+                  style={styles.input}
+                />
+
+                <label style={styles.label}>Correo electrónico 📧</label>
+                <input
+                  type="email"
+                  value={form.email}
+                  onChange={e => setForm({ ...form, email: e.target.value })}
+                  style={styles.input}
+                />
+              </div>
+
+              <div style={styles.formCol}>
+                <label style={styles.label}>Teléfono 📱</label>
+                <input
+                  type="tel"
+                  value={form.phone}
+                  onChange={e => setForm({ ...form, phone: e.target.value })}
+                  style={styles.input}
+                />
+
+                <label style={styles.label}>Dirección completa 🏠</label>
+                <input
+                  value={form.address}
+                  onChange={e => setForm({ ...form, address: e.target.value })}
+                  style={styles.input}
+                />
+
+                <label style={styles.label}>DNI / NIE 📄</label>
+                <input
+                  value={form.dni}
+                  onChange={e => setForm({ ...form, dni: e.target.value.toUpperCase() })}
+                  style={styles.input}
+                />
+              </div>
+
+              <div style={styles.formCol}>
+                <label style={styles.label}>Titulación de buceo 🎓</label>
+                <input
+                  value={form.certification}
+                  onChange={e => setForm({ ...form, certification: e.target.value })}
+                  style={styles.input}
+                />
+
+                {/* KPIs solo lectura para no perder funcionalidad */}
+                <div style={{ marginTop: 16, padding: 12, background:'#f7faff', border:'1px solid #e2ecff', borderRadius:8 }}>
+                  <div style={{fontWeight:600, marginBottom:8}}>Resumen</div>
+                  <div style={{display:'flex', gap:16}}>
+                    <div style={styles.kpi}><small>Puntos</small><strong>{form.points || 0}</strong></div>
+                    {/* Gastos del año actual si existieran compras */}
+                    <div style={styles.kpi}>
+                      <small>Gastado {currentYear}</small>
+                      <strong>{((form.purchases || []).filter(p => new Date(p.date).getFullYear() === currentYear).reduce((s,p) => s + (p.amount || 0), 0)).toFixed(2)}€</strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style={styles.formActions}>
+              <button type="submit" style={styles.primaryBtn}>{editing ? 'Guardar' : 'Añadir Cliente'}</button>
+              <button
+                type="button"
+                onClick={() => { setShowForm(false); setEditing(null); setForm(initialForm); setSearchTerm(''); }}
+                style={styles.smallDangerBtn}
+              >
+                Cancelar
+              </button>
+            </div>
+          </form>
+        )}
+      </main>
+
+      {/* Modal con lista de correos */}
+      {emailList && (
+        <div style={styles.emailModalOverlay}>
+          <div style={styles.emailModalContent}>
+            <h2>Lista de Correos</h2>
+            <textarea readOnly value={emailList} style={styles.emailListBox} />
+            <button onClick={() => setEmailList('')} style={styles.modalCloseBtn}>Cerrar</button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal ver cliente */}
+      {selectedClient && (
+        <div style={styles.emailModalOverlay}>
+          <div style={styles.emailModalContent}>
+            <h2>{selectedClient.name}</h2>
+            <p><strong>Email:</strong> {selectedClient.email || '—'}</p>
+            <p><strong>Teléfono:</strong> {selectedClient.phone || '—'}</p>
+            <p><strong>DNI:</strong> {selectedClient.dni || '—'}</p>
+            <p><strong>Dirección:</strong> {selectedClient.address || '—'}</p>
+            <p><strong>Fecha Nac.:</strong> {selectedClient.dob || '—'}</p>
+            <p><strong>Titulación:</strong> {selectedClient.certification || '—'}</p>
+            <p>
+              <strong>Gastado {currentYear}:</strong>{' '}
+              {(
+                (selectedClient.purchases || [])
+                  .filter(pu => new Date(pu.date).getFullYear() === currentYear)
+                  .reduce((s, pu) => s + (pu.amount || 0), 0)
+              ).toFixed(2)}€
+            </p>
+            <p><strong>Puntos:</strong> {selectedClient.points || 0}</p>
+            <div style={{marginTop:12, textAlign:'right'}}>
+              <button onClick={() => { setSelectedClient(null); setSearchTerm(''); }} style={styles.modalCloseBtn}>Cerrar</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ===================== ESTILOS =====================
+const styles = {
+  page: { backgroundColor: '#f2f6fc', minHeight: '100vh' },
+  header: { background:'#fff', padding:'12px 24px', boxShadow:'0 2px 4px rgba(0,0,0,0.1)', marginBottom:16 },
+  logo: { margin:0, fontFamily:'system-ui, -apple-system, Segoe UI, Roboto', fontSize:22, color:'#222' },
+  logoD: { color: '#e53935', fontWeight:700 },
+  main: { width:'100%', maxWidth:1200, margin:'0 auto', background:'#fff', borderRadius:12, boxShadow:'0 6px 20px rgba(0,0,0,0.06)', padding:24, minHeight:'80vh' },
+  topBar: { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, flexWrap:'wrap', gap:8 },
+  link: { textDecoration:'none', color:'#0070f3', fontWeight:500 },
+  dangerBtn: { background:'#d9534f', color:'#fff', border:'none', padding:'6px 12px', borderRadius:6, cursor:'pointer' },
+
+  metricsGrid: { display:'grid', gridTemplateColumns:'repeat(3, minmax(0,1fr))', gap:12, marginBottom:20 },
+  metricCard: { color:'#fff', padding:16, borderRadius:10, textAlign:'center', boxShadow:'0 4px 12px rgba(0,0,0,0.08)' },
+  metricLabel: { opacity:0.9, fontSize:13 },
+  metricValue: { fontSize:24, marginTop:4, fontWeight:700 },
+
+  controls: { display:'flex', gap:8, alignItems:'center', marginBottom:16, flexWrap:'wrap' },
+  input: { padding:10, borderRadius:8, border:'1px solid #d5dbe7', flex:'1 1 260px', fontSize:14 },
+  inputSmall: { padding:10, borderRadius:8, border:'1px solid #d5dbe7', flex:'0 1 220px', fontSize:14 },
+  tabBtn: { background:'#e7f2ff', border:'none', padding:'8px 14px', borderRadius:8, cursor:'pointer' },
+  activeBtn: { background:'#0070f3', color:'#fff', border:'none', padding:'8px 14px', borderRadius:8, cursor:'pointer' },
+  fileInput: { marginBottom:16 },
+  error: { color: 'red', marginTop: 4 },
+  primaryBtn: { background:'#0070f3', color:'#fff', border:'none', padding:'10px 16px', borderRadius:10, cursor:'pointer', marginBottom:16 },
+
+  // GRID de tarjetas
+  cardsGrid: { display:'grid', gridTemplateColumns:'repeat( auto-fill, minmax(280px, 1fr) )', gap:16 },
+  card: { background:'#ffffff', border:'1px solid #e9edf5', borderRadius:12, overflow:'hidden', display:'flex', flexDirection:'column', boxShadow:'0 2px 10px rgba(0,0,0,0.04)' },
+  cardHeader: { display:'flex', alignItems:'center', justifyContent:'space-between', padding:16, borderBottom:'1px solid #f0f3fa' },
+  avatar: { width:40, height:40, borderRadius:999, background:'#e3f2fd', color:'#0d47a1', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700 },
+  cardName: { fontWeight:700 },
+  badge: { display:'inline-block', marginTop:4, fontSize:12, background:'#e3f2fd', color:'#0d47a1', padding:'2px 8px', borderRadius:999 },
+  whatsappIcon: { fontSize:22, textDecoration:'none' },
+  cardBody: { padding:16, display:'grid', gap:6 },
+  row: { display:'flex', justifyContent:'space-between', gap:8, fontSize:14 },
+  label: { color:'#57607a', fontWeight:500 },
+  cardFooter: { display:'flex', gap:16, padding:'12px 16px', borderTop:'1px solid #f0f3fa', background:'#fafcff' },
+  kpi: { display:'flex', flexDirection:'column', gap:2 },
+  cardActions: { display:'flex', gap:8, padding:12, justifyContent:'flex-end' },
+
+  // Formulario
+  form: { border:'1px solid #e9edf5', borderRadius:12, padding:16, marginTop:16 },
+  formRow: { display:'flex', gap:16, flexWrap:'wrap' },
+  formCol: { flex:'1 1 320px', minWidth:260 },
+  formActions: { marginTop: 16, textAlign: 'right' },
+  smallBtn: { background:'#28a745', color:'#fff', border:'none', padding:'6px 10px', borderRadius:8, cursor:'pointer', fontSize:12 },
+  smallDangerBtn: { background:'#dc3545', color:'#fff', border:'none', padding:'6px 10px', borderRadius:8, cursor:'pointer', fontSize:12 },
+
+  // Modal
+  emailModalOverlay: { position:'fixed', left:0, top:0, width:'100vw', height:'100vh', background:'rgba(0,0,0,0.3)', display:'flex', justifyContent:'center', alignItems:'center', zIndex:3000 },
+  emailModalContent: { background:'#fff', borderRadius:12, padding:24, width:'90%', maxWidth:640, boxShadow:'0 16px 48px rgba(0,0,0,0.2)' },
+  emailListBox: { width:'100%', height:200, padding:8, fontSize:14, borderRadius:8, border:'1px solid #d5dbe7', marginBottom:16, resize:'none' },
+  modalCloseBtn: { background:'#0070f3', color:'#fff', border:'none', borderRadius:10, padding:'10px 16px', fontSize:14, cursor:'pointer' },
+};
